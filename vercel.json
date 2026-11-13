@@ -1,0 +1,25 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/players/:id",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/uk/players/:id",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/me",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/uk/me",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/app.html"
+    }
+  ]
+}

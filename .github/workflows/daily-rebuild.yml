@@ -1,0 +1,23 @@
+# Rebuilds the site once a day so the prerendered pages (win rates, top builds, counters)
+# stay fresh. Cloudflare Pages runs the actual build — this only pings its deploy hook.
+#
+# Setup: Cloudflare dashboard → Workers & Pages → <project> → Settings → Builds →
+#        Deploy hooks → create one for the production branch, then add its URL to
+#        GitHub → repo → Settings → Secrets and variables → Actions → CF_PAGES_DEPLOY_HOOK
+name: Daily rebuild
+
+on:
+  schedule:
+    - cron: '17 4 * * *' # every day at 04:17 UTC
+  workflow_dispatch: {}
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Cloudflare Pages deploy hook
+        env:
+          HOOK: ${{ secrets.CF_PAGES_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "::error::CF_PAGES_DEPLOY_HOOK secret is not set"; exit 1; fi
+          curl -fsS -X POST "$HOOK"

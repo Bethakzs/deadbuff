@@ -1,0 +1,94 @@
+/* ==================================================================
+   Design tokens — "occult noir / art-deco ledger".
+   Warm near-black paper, cream ink, brass accents. Matches Deadlock's
+   1920s-occult-New-York look. Every colour in the app comes from here.
+   ================================================================== */
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --bg: #0c0a08;
+  --bg-raise: #120f0c;
+  --panel: #16130f;
+  --panel-2: #1c1813;
+  --panel-3: #241f18;
+  --line: rgb(236 222 196 / 0.08);
+  --line-strong: rgb(236 222 196 / 0.16);
+
+  /* ink */
+  --text: #ece3d0;
+  --text-2: #bfb4a0;
+  --muted: #8b8172;
+  --faint: #5f574c;
+
+  /* accents */
+  --brass: #d9a95b;
+  --brass-hi: #f1cf8f;
+  --brass-lo: #8a6a35;
+  --blood: #c4402f;
+
+  /* item slots (in-game colours) */
+  --weapon: #e8913a;
+  --vitality: #7cc243;
+  --spirit: #b27cf0;
+  --weapon-rgb: 232 145 58;
+  --vitality-rgb: 124 194 67;
+  --spirit-rgb: 178 124 240;
+
+  /* win-rate scale */
+  --wr-great: #4fd18b;
+  --wr-good: #a4d77d;
+  --wr-even: #cfc5b1;
+  --wr-bad: #eb9d68;
+  --wr-awful: #ec5a4f;
+
+  /* tiers */
+  --tier-s: #f4c45a;
+  --tier-a: #9fd67a;
+  --tier-b: #6fb6e8;
+  --tier-c: #b7a6e2;
+  --tier-d: #8c8378;
+
+  /* positions — used ONLY on the hero profile (header chips + positions panel) */
+  --pos-carry-rgb: 244 196 90;
+  --pos-playmaker-rgb: 236 104 90;
+  --pos-pick-rgb: 111 168 240;
+  --pos-support-rgb: 92 204 140;
+
+  /* per-hero accent; overridden inline on hero pages / cards */
+  --hero: 217 169 91;
+
+  /* type */
+  --font-display: 'Big Shoulders Display', 'Oswald', 'Arial Narrow', sans-serif;
+  --font-body: 'Barlow', 'Fira Sans', 'Segoe UI', system-ui, sans-serif;
+  --font-serif: 'Cormorant Garamond', Georgia, serif;
+  /* display headings: a touch of air between letters, words and lines */
+  --display-tracking: 0.035em;
+  --display-word: 0.08em;
+  --display-leading: 1.06;
+
+  /* geometry */
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 14px;
+  --container: 1280px;
+  --header-h: 64px;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur: 220ms;
+
+  --shadow-1: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 10px 30px -12px rgb(0 0 0 / 0.7);
+  --shadow-2: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 60px -20px rgb(0 0 0 / 0.85);
+}
+
+/* Big Shoulders and Barlow have no Cyrillic: Ukrainian swaps in the closest Cyrillic-capable pair.
+   (Google Fonts serves them per unicode-range, so English visitors never download them.) */
+:root[lang='uk'] {
+  --font-display: 'Oswald', 'Arial Narrow', sans-serif;
+  --font-body: 'Fira Sans', 'Segoe UI', system-ui, sans-serif;
+  --display-tracking: 0.03em;
+  --display-word: 0.06em;
+  --display-leading: 1.12;
+}
