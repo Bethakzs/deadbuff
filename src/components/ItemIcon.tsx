@@ -90,7 +90,7 @@ export function ItemIcon({ item, size = 'md', stat, pickRate, annotation, showNa
         <img src={itemImage(item)} alt={item.name} loading="lazy" decoding="async" />
         {item.item_tier ? (
           <span className="item-icon__tier" aria-hidden>
-            {Array.from({ length: Math.min(item.item_tier, 4) }, (_, i) => (
+            {Array.from({ length: item.item_tier }, (_, i) => (
               <i key={i} />
             ))}
           </span>

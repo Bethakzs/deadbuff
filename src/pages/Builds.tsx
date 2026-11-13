@@ -23,7 +23,9 @@ export function BuildsPage() {
   useDocumentMeta(t('meta.builds'), t('meta.desc.builds'));
   const heroes = useHeroes();
   const items = useItems();
-  const [heroId, setHeroId] = useState<number | undefined>();
+  // No "all heroes" view (owner's request): until a hero is picked, show the first one in the picker.
+  const [picked, setPicked] = useState<number | undefined>();
+  const heroId = picked !== undefined && heroes.byId.has(picked) ? picked : heroes.list[0]?.id;
   const [sort, setSort] = useState<Sort>('weekly_favorites');
   const [tag, setTag] = useState<number | undefined>();
   const [search, setSearch] = useState('');
@@ -33,7 +35,7 @@ export function BuildsPage() {
   const [visible, setVisible] = useState(BUILD_STEP);
   useEffect(() => setVisible(BUILD_STEP), [heroId, sort, tag, searchName]);
 
-  const q = useBuildPages({ heroId, sortBy: sort, tag, search: searchName, pageSize: BUILD_PAGE });
+  const q = useBuildPages({ heroId, sortBy: sort, tag, search: searchName, pageSize: BUILD_PAGE }, heroId !== undefined);
   const all = useMemo(() => uniqueBuilds(q.data?.pages), [q.data]);
   const builds = all.slice(0, visible);
   const canMore = visible < all.length || !!q.hasNextPage;
@@ -57,14 +59,11 @@ export function BuildsPage() {
         </header>
 
         <div className="hero-picker" role="listbox" aria-label={t('builds.filterHero')}>
-          <button className={`hero-picker__all ${heroId === undefined ? 'is-active' : ''}`} onClick={() => setHeroId(undefined)}>
-            {t('builds.all')}
-          </button>
           {heroes.list.map((h) => (
             <button
               key={h.id}
               className={`hero-picker__btn ${heroId === h.id ? 'is-active' : ''}`}
-              onClick={() => setHeroId(heroId === h.id ? undefined : h.id)}
+              onClick={() => setPicked(h.id)}
               title={h.name}
               aria-selected={heroId === h.id}
             >
@@ -89,9 +88,9 @@ export function BuildsPage() {
         <BuildTagFilter value={tag} onChange={setTag} />
 
         <div className="build-list">
-          {q.error ? (
-            <ErrorState error={q.error} onRetry={() => q.refetch()} />
-          ) : q.isLoading ? (
+          {q.error || heroes.error ? (
+            <ErrorState error={q.error ?? heroes.error} onRetry={() => (heroes.error ? heroes.refetch() : q.refetch())} />
+          ) : q.isLoading || heroId === undefined ? (
             Array.from({ length: 6 }, (_, i) => <Skeleton key={i} h={120} r={12} />)
           ) : !builds.length ? (
             <Empty>{t(tag ? 'hb.emptyTag' : 'builds.empty')}</Empty>

@@ -15,6 +15,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
+  font-size-adjust: var(--body-adjust);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -105,17 +106,19 @@ body::after {
 /* ============================ type =============================== */
 .display {
   font-family: var(--font-display);
+  font-size-adjust: var(--display-adjust);
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: var(--display-tracking);
   word-spacing: var(--display-word);
   line-height: var(--display-leading);
 }
-:root[lang='uk'] .display {
+:root:is([lang='uk'], [lang='ru']) .display {
   font-weight: 700;
 }
 .eyebrow {
   font-family: var(--font-display);
+  font-size-adjust: var(--display-adjust);
   font-weight: 700;
   font-size: 12px;
   letter-spacing: 0.22em;
@@ -124,6 +127,7 @@ body::after {
 }
 .serif {
   font-family: var(--font-serif);
+  font-size-adjust: none;
   font-style: italic;
 }
 .muted {

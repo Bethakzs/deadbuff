@@ -41,7 +41,8 @@ function resolve(urlPath: string): string {
   if (isFile(join(direct, 'index.html'))) return join(direct, 'index.html');
   for (const [from, to] of rewrites) {
     const hit = from.endsWith('/*') ? urlPath.startsWith(from.slice(0, -1)) : urlPath === from;
-    if (hit) return join(DIST, to);
+    // targets are extensionless like on Pages ("/app" → app.html)
+    if (hit) return isFile(join(DIST, `${to}.html`)) ? join(DIST, `${to}.html`) : join(DIST, to);
   }
   return join(DIST, 'index.html');
 }

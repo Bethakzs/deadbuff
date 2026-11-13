@@ -1,36 +1,39 @@
 import { Fragment, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { elapsed, setFormatLocale } from '../lib/format';
 import { I18nContext as Ctx, type Vars } from './context';
+import { de } from './de';
 import { en, type MsgKey } from './en';
-import { LANGS, langFromPath, pathForLang, type Lang, type Msg } from './types';
+import { es } from './es';
+import { ru } from './ru';
+import { LANGS, langFromBrowser, langFromPath, pathForLang, type Lang, type Msg } from './types';
 import { uk } from './uk';
 
 export { LANGS };
 export type { Lang, MsgKey };
 
-const DICTS: Record<Lang, Record<MsgKey, Msg>> = { en, uk };
+const DICTS: Record<Lang, Record<MsgKey, Msg>> = { en, uk, de, es, ru };
 const STORAGE_KEY = 'deadbuff.lang.v1';
 
 /**
- * The URL is the source of truth (/uk/... = Ukrainian). A visitor landing on an English URL is moved
- * to the /uk version only if they chose Ukrainian before, or — on their first visit — their browser
- * is Ukrainian. Crawlers (no storage, English browser) always get the URL they asked for.
+ * The URL is the source of truth (/uk/... = Ukrainian, /de/... = German…). A visitor landing on an
+ * English URL is moved to another language's URL only if they chose that language before, or — on
+ * their first visit — it is their browser's language. Crawlers (no storage, English browser) always
+ * get the URL they asked for.
  */
 function detect(): Lang {
   const { pathname, search, hash } = window.location;
-  if (langFromPath(pathname) === 'uk') return 'uk';
+  const fromPath = langFromPath(pathname);
+  if (fromPath !== 'en') return fromPath;
   let saved: string | null = null;
   try {
     saved = localStorage.getItem(STORAGE_KEY);
   } catch {
     /* storage unavailable */
   }
-  const nav = (navigator.languages?.[0] ?? navigator.language ?? 'en').toLowerCase();
-  if (saved === 'uk' || (!saved && nav.startsWith('uk'))) {
-    window.history.replaceState(null, '', pathForLang(pathname, 'uk') + search + hash);
-    return 'uk';
-  }
-  return 'en';
+  const savedLang = LANGS.find((l) => l.id === saved)?.id;
+  const want = savedLang ?? langFromBrowser(navigator.languages?.length ? navigator.languages : [navigator.language ?? 'en']) ?? 'en';
+  if (want !== 'en') window.history.replaceState(null, '', pathForLang(pathname, want) + search + hash);
+  return want;
 }
 
 const pluralRules = new Map<string, Intl.PluralRules>();
@@ -49,7 +52,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(detect);
   const meta = LANGS.find((l) => l.id === lang)!;
 
-  /** Switches language by moving to the same page under the other URL prefix (the router remounts on it). */
+  /** Switches language by moving to the same page under that language's URL prefix (the router remounts on it). */
   const setLang = useCallback((next: Lang) => {
     const { pathname, search, hash } = window.location;
     window.history.replaceState(null, '', pathForLang(pathname, next) + search + hash);
@@ -63,7 +66,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // Number/date formatters and <html lang> (drives the Cyrillic font swap in tokens.css)
+  // Number/date formatters and <html lang> (drives the per-script font swap in tokens.css)
   // must switch before children render, so do it synchronously.
   setFormatLocale(meta.locale);
   if (document.documentElement.lang !== meta.locale) document.documentElement.lang = meta.locale;

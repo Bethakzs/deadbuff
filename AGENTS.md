@@ -3,6 +3,9 @@
 > Read this file before changing anything. It explains what the project is, how data flows,
 > which API endpoints are used (and their quirks), the design system, and the conventions
 > every change must follow. Keep it up to date when you change architecture, routes or data.
+>
+> Project status, hosting / domain / Search Console setup, the owner's decision history, open questions and the
+> roadmap live in [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) (Ukrainian) — read it first in a new session.
 
 ---
 
@@ -15,14 +18,15 @@ Main goals (in priority order):
 1. **Hero builds** — community builds ranked by real match win rate / usage.
 2. **Hero win-rate statistics** — sortable meta table + tier list, filterable by rank bracket and time window.
 3. **Hero pages** — what every ability does (description, cooldowns, T1/T2/T3 upgrades), popular skill order, core items, matchups, base stats, lore.
-4. Item stats (shop view + table) and a global build browser.
+4. Item stats (shop view + table + a page per item), a global build browser, match pages, patch impact
+   and the ranked leaderboard.
 
 There is **no backend**. The site is a static SPA that calls the public
 [Deadlock API](https://api.deadlock-api.com/docs) directly from the browser (CORS `*`).
 All hero/item art comes from `assets-bucket.deadlock-api.com`.
 
-UI languages: **English and Ukrainian**, switchable in the header (EN / UA), see §8. The owner communicates
-in Ukrainian — answer them in Ukrainian.
+UI languages: **English, Ukrainian, German, Spanish, Russian** (EN / UA / DE / ES / RU), picked from the globe
+menu in the header, see §8. The owner communicates in Ukrainian — answer them in Ukrainian.
 
 **Copy rule (owner's request): no full stop at the end of any UI text** — headings, subtitles, blurbs,
 buttons, errors, and also API descriptions (stripped automatically, see §8). Write one sentence per string
@@ -42,7 +46,7 @@ and join clauses with "—" or "·" instead of ".".
 | Tooltips | @floating-ui/react |
 | Styling | Plain CSS with design tokens (no Tailwind, no CSS-in-JS) |
 | i18n | Own tiny layer in `src/i18n` (typed dictionaries, `Intl.PluralRules`, no library) |
-| Fonts | Google Fonts. EN: Big Shoulders Display (display) + Barlow (body). UA: Oswald + Fira Sans (Big Shoulders/Barlow have no Cyrillic). Cormorant Garamond (serif/lore) for both |
+| Fonts | Google Fonts. EN / DE / ES: Big Shoulders Display (display) + Barlow (body). UA / RU: Oswald + Fira Sans (Big Shoulders/Barlow have no Cyrillic), size-matched with `font-size-adjust` (§8). Cormorant Garamond (serif/lore) for all |
 
 Versions are **pinned exactly** in `package.json`. Don't bump majors casually.
 
@@ -72,8 +76,12 @@ Why Cloudflare: free static hosting + registrar at cost + room for a backend lat
 - `.github/workflows/daily-rebuild.yml` pings a Pages deploy hook daily (secret `CF_PAGES_DEPLOY_HOOK`) so
   prerendered numbers stay fresh. GitHub pauses scheduled workflows after 60 days without repo activity.
 - Routing: `/x/y` → `x/y.html` (Pages pretty URLs); `_redirects` (generated) rewrites `/players/*`, `/me`
-  (+ `/uk/…`) to the SPA shell `app.html`; unknown paths → `index.html` (Pages SPA mode — keep NO top-level
-  `404.html`, it would disable that). `vercel.json` mirrors this for Vercel (`cleanUrls` + rewrites).
+  (+ the same under every language prefix `/uk`, `/de`, `/es`, `/ru`) to the SPA shell `app.html` — the rule target must be **`/app`, not `/app.html`** (Pages 308-redirects
+  `*.html` to the extensionless URL, which turned the rewrite into a redirect and lost the player URL). Unknown
+  paths → `index.html` (Pages SPA mode — keep NO top-level `404.html`, it would disable that). `vercel.json`
+  mirrors this for Vercel (`cleanUrls` + rewrites).
+- Live: https://deadbuff.pages.dev (Pages project `deadbuff`, production branch `main`), domain `deadbuff.net`
+  (registered at Namecheap, DNS on Cloudflare).
 
 ### Planned stage 2 (backend) — keep the code ready for it
 - Steam login = OpenID 2.0, verified server-side (`check_authentication`) in a Pages Function
@@ -88,7 +96,11 @@ Why Cloudflare: free static hosting + registrar at cost + room for a backend lat
 ## 4. File map
 
 ```
-index.html                 fonts, preconnects, default meta (the prerender rewrites title/meta per page)
+index.html                 fonts, preconnects, favicons, default meta (the prerender rewrites title/meta per page)
+public/
+  favicon.svg              source of the mark; favicon.ico + favicon-48/96/192.png + apple-touch-icon.png are
+                           generated from it — Google only shows a site icon it can fetch as a raster file, and
+                           /favicon.ico must exist or the SPA fallback answers it with HTML
 vite.config.ts             single "vendor" chunk for node_modules
 scripts/
   prerender.ts             SEO: static HTML per route × language, sitemap.xml, robots.txt, app.html, _redirects
@@ -98,7 +110,7 @@ scripts/
 src/
   data/
     roles.ts               HERO_ROLES: Dota-style position ratings 0–10 per hero (edit numbers here)
-  main.tsx                 I18nProvider > QueryClient > FilterProvider > Routed (BrowserRouter, basename = "" | "/uk",
+  main.tsx                 I18nProvider > QueryClient > FilterProvider > Routed (BrowserRouter, basename = "" | "/uk" | "/de" | "/es" | "/ru",
                            keyed by language), imports CSS in order
   App.tsx                  routes + AnimatePresence page transitions (keyed by first 2 path segments); no scroll
                            reset on mount so a language switch keeps the scroll position
@@ -106,10 +118,11 @@ src/
     index.tsx              I18nProvider + useT(): { t, rich, ago, lang, meta, setLang }; persists language,
                            sets <html lang> and the number/date locale synchronously
     context.ts             the React context, kept in its own module so dictionary edits hot-reload cleanly
-    types.ts               Msg type, LANGS (id, switch label, Intl locale, API `language`, URL prefix),
+    types.ts               Msg type, LANGS (id, menu code + native name, Intl locale, og:locale, API `language`,
+                           URL prefix), langFromPath(), pathForLang(), langFromBrowser()
                            langFromPath(), pathForLang()
     en.ts                  English strings — defines the key set (MsgKey)
-    uk.ts                  Ukrainian strings — Record<MsgKey, Msg>, TypeScript fails if a key is missing
+    uk.ts / de.ts / es.ts / ru.ts   translations — Record<MsgKey, Msg>, TypeScript fails if a key is missing
   lib/
     api.ts                 ALL network calls live here (fetch wrapper, endpoints, StatFilters -> params)
     types.ts               API response types (only fields we use) + client fields Hero.slug / Hero.name_en
@@ -120,10 +133,17 @@ src/
     items.ts               slots, property formatting, ability key stats + upgrade text, item tooltip data
     format.ts              locale-aware number/percent/time formatting (setFormatLocale), wrTone() colour scale
     builds.ts              BUILD_STEP (10 revealed per "Show more"), BUILD_PAGE (50 per API page), uniqueBuilds()
-    html.ts                sanitizeHtml() for API description fragments (strips scripts/on* handlers) + trimDot()
+    html.ts                sanitizeHtml() for API description fragments (strips scripts/on* handlers) + trimDot(),
+                           loreParagraphs() (lore is split by "
+" OR "<br><br>" depending on the hero)
     seo.ts                 useDocumentMeta(title, description) — runtime twin of the prerendered tags
     steam.ts               SteamID64 ⇄ account_id, parseAccountInput() (links, SteamID3, ids)
     me.ts                  useMe()/setMe() — "It's me" account id in localStorage (stage-2 → Steam login)
+    match.ts               match page maths: teamTotals(), laneResults() (who won each lane on souls at 10:00),
+                           soulLead(), objectiveEvents(), killMatrix() (who killed whom, from death_details),
+                           statAt()/finalStat() over the stat snapshots
+    patches.ts             patchTimeline() (changelog posts + big patch days), patchWindows() (7 days before vs
+                           7 days after, cut at neighbouring patches), patchImpact() — pure, also used by prerender
   hooks/
     useAssets.ts           useHeroes / useItems / useRanks / usePatches (static data, cached forever,
                            fetched in the UI language; heroes merge English slugs with localised text)
@@ -132,9 +152,14 @@ src/
     useHeroData.ts         derived data: useHeroMatchups(), useHeroItemRows(), useLaneAgg() (lanes + aggregates, header chip only)
     usePlayer.ts           player queries: steam search, match history, per-hero stats, rank, teammates
   components/
-    Layout.tsx             sticky header (scroll-tinted), nav with animated underline, LangSwitch (EN/UA),
+    Layout.tsx             sticky header (scroll-tinted): NAV (4 main tabs) + MoreMenu ("three lines" button with the
+                           MORE sections; inline in the mobile burger), LangSwitch (globe button → dropdown of
+                           native language names),
                            footer, Logo; sets the document title for non-hero routes
-    HeroSearch.tsx         hero quick search ("/" hotkey, arrows + Enter); matches localised + English names
+    SiteSearch.tsx         header/home search ("/" hotkey, arrows + Enter): heroes (+ a tab word, "haze build" →
+                           /heroes/haze/builds), sections (PAGES: "tier list", "my stats", "matches"…, matched on the
+                           translated name AND English keywords), shop items (loaded only once the search is used),
+                           a pasted number → match / player id. "deadlock" is stripped from the query
     FilterBar.tsx          rank dropdown (with rank badge images) + period segmented control
     UI.tsx                 SectionTitle, Panel, TierBadge, Skeleton(Rows), ErrorState, Empty,
                            CountUp, Segmented (animated pill), Page (route transition wrapper), Diamond
@@ -144,7 +169,8 @@ src/
                            small "!" badge with the note as a native title tooltip (owner wants it kept simple)
     Position.tsx           PositionChip(s), PositionFilter (All / Carry / Playmaker / Pick / Support), RoleBars (0–10);
                            monochrome by default, `colored` only on the hero profile
-    Ability.tsx            AbilityGlyph, AbilityIcon (with tooltip), AbilityCard (full panel)
+    Ability.tsx            AbilityGlyph, AbilityIcon (with tooltip), AbilityCard (collapsed to icon + name +
+                           one-line preview; click the head to reveal description, stats and T1–T3)
     AbilityOrderGrid.tsx   Dotabuff-style skill order grid (◆ unlock, I/II/III upgrades)
     BuildCard.tsx          collapsible build: pinned tag icons, preview items -> categories, skill order, copy build ID
     BuildTagFilter.tsx     build-tag chips (shared by the hero Builds tab and the build browser)
@@ -158,11 +184,21 @@ src/
     Heroes.tsx             meta table (sortable, position + class filters, Position column).
                            Exports ROLE_FILTERS, useRoleOptions(), heroMatches()
     TierList.tsx           S/A/B/C/D rows of HeroCards, position filter
-    Items.tsx              shop view (slot tabs × tier columns) / table view
-    Builds.tsx             global build browser: hero picker, sort, name search, build-tag filter, "Show more"
+    Items.tsx              shop view (slot tabs × tier columns; items without stats are hidden) / table view
+    Builds.tsx             global build browser: hero picker (no "All" — defaults to the first hero in the list,
+                           owner's request), sort, name search, build-tag filter, "Show more"
                            (same server-side tag/pagination logic as the hero Builds tab)
     Players.tsx            player search (+ RankEmblem), "My profile" card
-    Player.tsx             player profile (normal-mode matches only) + MeRedirect for /me
+    Matches.tsx            /matches: open a match by ID + "My recent matches" of the profile marked "It's me"
+    Item.tsx               item page: header stats, who buys it (bucket=hero), buy-minute chart (bucket=game_time_min),
+                           shop card, built from / upgrades into
+    Match.tsx              match page, four tabs: Scoreboard (team tables), Stats (team comparison bars,
+                           per-player rankings, kill matrix), Lanes (lane winners), Timeline (soul lead, objectives,
+                           item timings). Rows of the profile marked "It’s me" get `.is-me` everywhere
+    Patches.tsx            patch impact: patch picker (?patch=YYYY-MM-DD), winners / losers, full before/after table
+    Leaderboard.tsx        Valve ranked leaderboard: region switch (?region=), hero dropdown (?hero=slug)
+    Player.tsx             player profile (normal-mode matches only) + MeRedirect for /me. Exports MatchList (every
+                           row is a link to /matches/:id) and normalMatches()
     NotFound.tsx
     hero/
       HeroPage.tsx         header (bg art, portrait, SVG name, stats) + sticky tabs; sets --hero colour on <html>
@@ -170,7 +206,7 @@ src/
       HeroBuilds.tsx       Most played / Highest win rate / Trending + build-tag filter + "Show more" pagination
       HeroItems.tsx        ItemTable for this hero
       HeroMatchups.tsx     counters (vs) / synergies (with)
-      HeroLore.tsx         lore with drop cap + playstyle
+      HeroLore.tsx         lore with drop cap + playstyle (paragraphs via loreParagraphs(), rendered as sanitized HTML)
   styles/
     tokens.css             design tokens (colours, fonts, radii, easing) — single source of truth
     base.css               reset, film-grain + glow atmosphere, typography helpers, .container/.page
@@ -188,24 +224,32 @@ src/
 | `/heroes/:slug` | Hero overview (`slug` = `hero.slug` = `heroSlug(englishName)`, e.g. `lady-geist`, `mo-and-krill`, `the-doorman`). Always English, so links don't change with the UI language |
 | `/heroes/:slug/:tab` | `builds` · `items` · `matchups` · `lore` (unknown tab → redirect to overview) |
 | `/items` | Item stats |
+| `/items/:slug` | Item page. `slug` = `itemSlug(englishName)` (`mystic-burst`) in every language — `useShopItemSlugs()` loads the English upgrade names outside EN. Unknown slug → `/items` |
+| `/matches` | Match lookup by ID + my recent matches |
+| `/matches/:matchId` | Match page (SPA only, not prerendered — rewritten to `/app` like players) |
+| `/patches` | Patch impact; `?patch=YYYY-MM-DD` picks an older patch |
+| `/leaderboard` | Ranked leaderboard; `?region=NAmerica` / `?hero=haze` |
 | `/builds` | Build browser |
 | `/players` | Player search (Steam name, profile link, SteamID64, SteamID3 or account id) |
 | `/players/:accountId` | Player profile: rank, recent form, match history, heroes, teammates; "It's me" button |
 | `/me` | Redirect to the profile marked "It's me" (or `/players`) |
 | `*` | 404 |
 
-**Every route also exists under `/uk`** (`/uk/heroes/haze/builds`). The language prefix is the React Router
+**Every route also exists under `/uk`, `/de`, `/es`, `/ru`** (`/uk/heroes/haze/builds`). The language prefix is the React Router
 `basename` (`main.tsx` → `Routed`), so in-app links are always written WITHOUT the prefix (`to="/heroes/haze"`).
-Switching language rewrites the URL (`pathForLang`) and remounts the router. On a first visit with a Ukrainian
-browser (or a saved UA choice) the URL is moved to `/uk/…`; crawlers always get the URL they requested.
+Switching language rewrites the URL (`pathForLang`) and remounts the router. On a first visit whose browser
+language (top choice) is one we support — or with a saved choice — an English URL is moved to that language's
+prefix; crawlers always get the URL they requested.
 
 ### SEO prerender (`scripts/prerender.ts`, runs in `npm run build`)
-Writes a static HTML file for every public route × language (226 × 2 = 452 pages): own `<title>` /
+Writes a static HTML file for every public route × language (≈385 routes × 5 ≈ 1925 pages: the old 226 + a page per shop item that has stats in the last 7 days (~156) +
+/patches + /leaderboard + /matches): own `<title>` /
 description (same `meta.*` dictionary keys as the runtime `useDocumentMeta()`), canonical + hreflang
-(en, uk, x-default), Open Graph / Twitter tags (hero card art as image), JSON-LD on the home page, and a
+(en, uk, de, es, ru, x-default), Open Graph / Twitter tags (hero card art as image), JSON-LD on the home page, and a
 static text version of the page inside `#root` (`.seo-static`: hero role, stats, abilities with T1–T3,
 top builds with IDs, counters, lore, hero links) that React replaces on mount. Data is fetched from the
-API at build time (hero-stats over 7 days, counters, top 5 builds per hero). Player pages are not
+API at build time (hero-stats over 7 days, counters, top 5 builds per hero, item-stats overall + by hero,
+latest patch impact, Europe leaderboard). Player and match pages are not
 prerendered. When adding a page or a hero tab: add its `meta.*` keys, call `useDocumentMeta()` in the
 page AND add it to `pages()` in the prerender script.
 
@@ -245,8 +289,12 @@ Base: `https://api.deadlock-api.com/v1` · OpenAPI: `https://api.deadlock-api.co
 ### Assets
 All `/assets/*` endpoints accept `language=english|ukrainian|…` — names, descriptions, lore, tags,
 property labels/postfixes and rank names come back translated (official game localisation).
-Exception: `images.name_image` (hero logotype SVG) is English-only, so non-English UIs render the
-name as text instead.
+Exception: `images.name_image` (hero logotype SVG) spells the English name, so it is shown only when the
+localised name equals the English one (always in EN, mostly in DE/ES); otherwise the name is typeset.
+`description.lore` separates paragraphs with "
+" for some heroes and "<br><br>" for others (34 of 44), and
+may contain `<span class="italics">` / `<i>` (also in `playstyle`) → always go through `loreParagraphs()` +
+`sanitizeHtml()` / `stripHtml()`, never print it as plain text.
 
 | Endpoint | Notes |
 |---|---|
@@ -266,6 +314,7 @@ Description HTML contains `<span class="highlight">`, inline `<svg width="128">`
 |---|---|
 | `GET /analytics/hero-stats` | `[{hero_id, wins, losses, matches, total_kills, total_deaths, total_assists, total_net_worth, total_player_damage, total_shots_hit/missed, …}]` → `buildHeroRows()` |
 | `GET /analytics/item-stats?hero_id=&min_matches=50` | `[{item_id, wins, matches, players, avg_buy_time_s, …}]`. Without `hero_id` = all heroes. |
+| `GET /analytics/item-stats?bucket=hero` / `bucket=game_time_min` | Same rows + `bucket` = hero id / buy minute, for EVERY item in one call (~1.7 / 2.4 MB raw, ~0.5 MB gzipped; `include_item_ids` filters matches, not rows). Cached once per filter set and shared by all item pages |
 | `GET /analytics/hero-counter-stats?min_matches=100` | all pairs `{hero_id, enemy_hero_id, wins, matches_played, …}` (one call, cached, filtered client-side) |
 | `GET /analytics/hero-synergy-stats?min_matches=100` | pairs `{hero_id1, hero_id2, wins, matches_played}` (unordered pair: check both ids) |
 | `GET /analytics/ability-order-stats?hero_id=&min_matches=200` | `[{abilities: number[15-16], wins, matches}]`; first occurrence of an id = unlock. **Without `min_matches` it's ~2 MB** — keep the param. |
@@ -277,6 +326,10 @@ Description HTML contains `<span class="highlight">`, inline `<svg width="128">`
 | `GET /builds?hero_id=&sort_by=weekly_favorites&only_latest=true&limit=&start=` | `sort_by`: `weekly_favorites` \| `favorites` \| `updated_at`; `start`/`limit` paginate; `search_name` text search; **`tag=<id>` filters server-side** by a pinned icon (build-tag id, or item/ability id), so a tag filter is correct across all pages. Pages can overlap on ties → dedupe by `hero_build_id`. |
 | `GET /builds?build_id=X&only_latest=true` | single build (used for ids coming from hero-build-stats). One request per build, cached per id. |
 | `GET /players/steam?account_ids=1,2,3` | persona names + avatars for build authors. |
+| `GET /matches/{id}/metadata` | ~1 MB JSON, immutable → cached for the session. `assigned_lane` (1/4/6) gives lane duos; `objectives[]` = `{team (the OWNER of the structure), team_objective_id (0 = Patron), destroyed_time_s (0 = still standing)}`; `mid_boss[]` = Rejuvenator. `match_info.players[]`: team 0/1 (0 = Hidden King, 1 = Archmother), K/D/A, `net_worth`, `items[]` (`game_time_s`, `item_id`, `sold_time_s`) — ability unlocks/upgrades are in the same list, keep only `isShopItem`; `stats[]` snapshots (~every 3–5 min, last = end) with `player_damage`, `player_healing`, `net_worth`. 404 = not parsed yet |
+| `GET /leaderboard/{region}[/{hero_id}]` | Regions `Europe | NAmerica | SAmerica | Asia | Oceania`. Entries: `rank`, `account_name`, `possible_account_ids` (Valve publishes only the NAME — a common one matches hundreds of accounts), `top_hero_ids` (empty on hero boards). Short right after a ranked season starts |
+| `GET /players/rank?account_ids=` | Rank of up to 1000 accounts in one call (`badge`, `last_match.start_time`; `badge: 0` = unranked). The leaderboard uses it to resolve a shared name to the highest-ranked account — only for entries with ≤ 32 candidates and ≤ 400 ids per board, chunked 200 per request (URL length); busier names stay unlinked |
+| `GET /patches/big-days` | ISO timestamps of big patch days, newest first. `/patches` titles carry the real patch date ("09-29-2026 Update") — the post's `pub_date` can be weeks later |
 
 Build shape: `hero_build.details.mod_categories[] = {name, description, mods:[{ability_id, annotation}]}`
 (`ability_id` is an **item id**). Skill order: `details.ability_order.currency_changes` — keep entries with
@@ -344,11 +397,18 @@ Rules:
 1. **Only use tokens** from `styles/tokens.css` (`--bg`, `--panel`, `--text`, `--brass`, `--weapon`, `--vitality`, `--spirit`, `--wr-*`, `--tier-*` …). No new hex values in components.
 2. **Hero colour**: every hero-scoped element reads `--hero` (an `r g b` triple, use as `rgb(var(--hero) / .4)`). Set it inline with `heroRgb(hero)`. `HeroPage` also sets it on `<html>` so the page glow tints.
 3. **Item slot colours** are fixed: weapon orange, vitality green, spirit purple (in-game colours). Use the `slot-weapon|vitality|spirit` classes.
-4. **Typography**: headings/labels/numbers-as-display → `.display` / `--font-display` uppercase; body → `--font-body`; lore & quips → `.serif` (Cormorant italic). Numbers in tables → `.num` (tabular). Display headings get air from tokens `--display-tracking` / `--display-word` / `--display-leading` (the owner asked for slightly looser headings — don't tighten them back). The font stacks switch per language in `tokens.css` via `:root[lang='uk']`; the "Deadbuff" wordmark always stays in Big Shoulders. Banner lines are `white-space: nowrap` — keep each `home.title*` string short.
+4. **Typography**: headings/labels/numbers-as-display → `.display` / `--font-display` uppercase; body → `--font-body`; lore & quips → `.serif` (Cormorant italic). Numbers in tables → `.num` (tabular). Display headings get air from tokens `--display-tracking` / `--display-word` / `--display-leading` (the owner asked for slightly looser headings — don't tighten them back). The font stacks switch per language in `tokens.css` via `:root:is([lang='uk'], [lang='ru'])`; the "Deadbuff" wordmark always stays in Big Shoulders.
+   **Size matching:** Oswald is ~22% wider than Big Shoulders at the same cap height and Fira's x-height is taller than
+   Barlow's, so switching EN → UA used to look "zoomed in". Tokens `--display-adjust` (`cap-height 0.73`) and
+   `--body-adjust` (`ex-height 0.51`) are `none` for Latin languages; **every `font-family: var(--font-display)` is
+   followed by `font-size-adjust: var(--display-adjust)`, every body-font declaration (incl. the `font` shorthand,
+   which resets it) by `var(--body-adjust)`, and the serif / wordmark by `none`** — keep that pairing when adding CSS.
+   Sofia Sans (Extra) Condensed matched better on paper but renders Bulgarian letterforms for Ukrainian — don't use it. Banner lines are `white-space: nowrap` — keep each `home.title*` string short.
 5. **Surfaces**: `.panel` (gradient + brass top hairline), `border-radius: var(--radius-lg)` for cards, chamfered `clip-path` for primary buttons (`.btn--brass`) and tier badges.
 6. **Atmosphere**: `body::before` film grain and `body::after` radial glow are global — don't add more full-screen effects.
 7. Images: always prefer `*_webp`; use `loading="lazy"` except above-the-fold hero art.
-8. Responsive breakpoints used: 1100px (sidebars collapse), 860px (hero header stacks, tabs bar un-sticks), 720/640px (tables hide `.hide-sm`, grids shrink). `.hide-md` hides < 1000px. Verify 375px width has **no horizontal scroll**.
+8. Responsive breakpoints used: 1100px (sidebars collapse), 900px (header nav → burger menu; the header search box
+   shrinks first above it), 860px (hero header stacks, tabs bar un-sticks), 720/640px (tables hide `.hide-sm`, grids shrink). `.hide-md` hides < 1000px. Verify 375px width has **no horizontal scroll**.
 
 ### Motion conventions
 * Easing: `[0.22, 1, 0.36, 1]` (ease-out-quint) for almost everything; springs (`stiffness ~400-500, damping ~36-40`) for pills/underlines using `layoutId`.
@@ -375,15 +435,49 @@ Rules:
 * Skill-order grid (`.skill-grid`) has `overflow-x: auto`, which clips anything drawn outside its box — keep its
   small inner padding so the ability icon rings on the left aren't cut off.
 * Hero → Builds tab has no explanatory blurb under the title (removed on request) — just the mode switch and tag chips.
+* Header nav (owner's request): main tabs **Tier list, Heroes, Builds, Items**; then a "three lines" button that opens
+  Patches, Players, Matches, Leaderboard (`NAV` / `MORE` in `Layout.tsx`; the button gets the nav underline when one
+  of them is open). In the mobile burger all eight are listed. Mirrored in the prerender `navBlock()`.
+* Items without stats for the current filters are not shown in the shop (owner: no "no data" cells), and the prerender
+  only writes item pages for items with stats.
+* **Item tier 5 does not exist in the game** — the asset dump lists 17 such items, all priced 9999. `isShopItem()`
+  (`lib/items.ts`, `MAX_TIER`) drops them, so they never reach the shop, the search, an item page or the prerender.
+* The hero page's ability cards are collapsed by default and open on click — the owner wants a preview first, with a
+  chevron showing that there is more. A missing in-game quip falls back to the first sentence of the description.
+  Every collapsed card is exactly the same height: the name is one line (ellipsis) and the preview is always rendered
+  and clamped to two lines. An open card closes from a click anywhere inside it (unless text is selected).
+* A small back arrow hangs under the logo (`.back-btn`), shown only when `history.state.idx > 0` and not on the home page.
+* Match team colours: `--team0-rgb` (Hidden King, amber) / `--team1-rgb` (Archmother, sapphire); a lane card tints
+  itself with the lane colour from `/assets/generic-data`. A lane card puts the lane name and the soul gap in the
+  middle and the verdict (won / lost / even) above each duo, so it reads without comparing numbers.
+  Both duos keep their souls next to that middle column (the right side is `row-reverse`, full width).
+  The Scoreboard tab opens with a compact `LaneStrip` of the same results, which switches to the Lanes tab on click.
+* Four abilities (Graves’ Borrowed Decree, Mina’s Rake, Silver’s Boot Kick, Solomon’s Develop Queen) have no
+  `description.desc`: `abilityDescription()` falls back to `tooltip_details.info_sections` (Valve’s own localised
+  text). With several sections the first is the hero’s innate, so the one-line preview uses `abilityOwnText()`,
+  which takes the last one. Never write ability text by hand.
+* Scoreboard rows are grouped by lane (owner’s request): one `<tbody class="lane-group">` per lane, bracketed in the
+  lane colour with the lane name and won / lost / even above it.
+* The scoreboard table is `table-layout: fixed` with per-column widths (`.c-player`, `.c-lvl`, …) so the item icons
+  wrap onto a second line instead of scrolling the table sideways. Below 720px it stops being a table: every row
+  becomes a card and each `<td>` prints its own header from `data-label` (so a cell that already uses `::before`,
+  like `.souls`, must put that span inside the cell).
+* Match page team colours are tokens `--team0-rgb` (Hidden King, amber) / `--team1-rgb` (Archmother, sapphire).
+* Section explanations go in a muted `.section-sub` paragraph under `SectionTitle`, not in its `eyebrow` (long
+  uppercase eyebrows are hard to read).
+* Hero header: the card portrait has its own painted backdrop, so `.hero-head__portrait img` feathers all four edges
+  (two intersected mask gradients) to melt into the background art. The name reveal animates `clip-path` with
+  **negative insets** (`inset(-50% … -10%)`, same units at both ends) so the logotype's drop-shadow glow isn't clipped
+  into a hard-edged box.
 * Build cards: `.build-card__inner` uses `grid-template-columns: minmax(0, 1fr)` so the wide skill-order grid scrolls
   inside itself on phones instead of widening the card.
 * Numbers: `<CountUp>`; bars: animate `width` from 0.
 * `prefers-reduced-motion` is respected globally in `base.css`.
 * Note: when the preview browser pane is hidden, rAF is throttled and animations freeze mid-way (half-transparent text, partial count-ups). That's an artefact of the tool, not a bug.
 
-### Internationalisation (EN / UA)
+### Internationalisation (EN / UA / DE / ES / RU)
 * **Every UI string goes through `useT()`** — never put text straight into JSX. Add the key to `i18n/en.ts`
-  first, then to `i18n/uk.ts` (the build fails if Ukrainian is missing a key).
+  first, then to `uk.ts`, `de.ts`, `es.ts`, `ru.ts` (the build fails if a dictionary is missing a key).
 * `t('key', { name })` → string; `rich('key', { n: <b>…</b> })` → React nodes for placeholders that need markup;
   plural keys are objects `{ one, few, many, other }` picked by `Intl.PluralRules` from `vars.n`; `ago(unix)` → "5h ago" / "5 год тому".
 * Enumerations are stored as **keys** and translated at render time: roles (`roleOf()` → `t('role.' + key)`),
@@ -396,7 +490,8 @@ Rules:
 * **No trailing full stops**: dictionary strings never end with "."; `<Html>` and `trimDot()` strip the final
   "." from API descriptions, quips, role lines, playstyle and the last lore paragraph. `fmtCompact` drops the
   abbreviation dot of locales like "тис.".
-* Adding a language: add it to `LANGS` in `i18n/types.ts` (with the API `language` value), create its dictionary,
+* Adding a language: add it to `LANGS` in `i18n/types.ts` (with the API `language` value), create its dictionary
+  (and import it in `scripts/prerender.ts` + `vercel.json` rewrites),
   register it in `DICTS` (`i18n/index.tsx`), and add a font override in `tokens.css` if the Latin fonts lack its script.
 
 ---
@@ -419,8 +514,9 @@ Rules:
 
 * Item win rates are biased toward late-game items (longer games). Shown as a note under item tables; a "win rate by buy time" view (`item-stats?bucket=game_time_min`) would fix it.
 * Builds page has no win rates for builds outside a selected hero (hero-build-stats is per hero).
-* No player profiles / match history yet. Endpoints exist: `/players/{account_id}/match-history`, `/players/steam-search`, `/leaderboard/{region}`.
-* Only EN and UA. The API supports many more game languages (German, Russian, Chinese, …) — adding one is a dictionary + `LANGS` entry.
+* Match pages show what the metadata has; damage/healing come from the last stat snapshot. Ideas: objectives timeline,
+  death map (`death_details`), per-player soul graph.
+* EN / UA / DE / ES / RU. The API supports more game languages (French, Polish, Chinese, Japanese…) — adding one is a dictionary + `LANGS` entry (+ fonts for non-Latin scripts).
 * Player data completeness depends on the Deadlock API: full live match history only for accounts that added
   their bot on Steam; otherwise only matches it already ingested. Shown as a note on the player page.
 * "It's me" is per-browser (localStorage) until stage 2 adds real Steam login.
@@ -435,5 +531,5 @@ Rules:
 1. `npm run build` passes (it runs `tsc -b` first — strict mode, no unused vars).
 2. Open the affected pages in the dev server at desktop width **and** 375px; no horizontal scroll, no console errors.
 3. Loading (skeletons), error (`ErrorState`) and empty (`Empty`) states still render.
-4. Check the change in **both languages** (EN / UA switch in the header): no untranslated text, no trailing full stops, nothing overflowing because Ukrainian strings are longer.
+4. Check the change in **every language** (globe menu in the header; at least EN, UA and DE — German words are the longest): no untranslated text, no trailing full stops, nothing overflowing.
 5. Update this file if you changed routes, data flow, endpoints or design rules.

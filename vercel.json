@@ -2,24 +2,20 @@
   "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/players/:id",
-      "destination": "/app.html"
+      "source": "/:lang(uk|de|es|ru)?/players/:id",
+      "destination": "/app"
     },
     {
-      "source": "/uk/players/:id",
-      "destination": "/app.html"
+      "source": "/:lang(uk|de|es|ru)?/matches/:id",
+      "destination": "/app"
     },
     {
-      "source": "/me",
-      "destination": "/app.html"
-    },
-    {
-      "source": "/uk/me",
-      "destination": "/app.html"
+      "source": "/:lang(uk|de|es|ru)?/me",
+      "destination": "/app"
     },
     {
       "source": "/(.*)",
-      "destination": "/app.html"
+      "destination": "/app"
     }
   ]
 }

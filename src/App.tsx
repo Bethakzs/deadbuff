@@ -6,8 +6,13 @@ import { BuildsPage } from './pages/Builds';
 import { HeroPage } from './pages/hero/HeroPage';
 import { HeroesPage } from './pages/Heroes';
 import { HomePage } from './pages/Home';
+import { ItemPage } from './pages/Item';
 import { ItemsPage } from './pages/Items';
+import { LeaderboardPage } from './pages/Leaderboard';
+import { MatchPage } from './pages/Match';
+import { MatchesPage } from './pages/Matches';
 import { NotFound } from './pages/NotFound';
+import { PatchesPage } from './pages/Patches';
 import { MeRedirect, PlayerPage } from './pages/Player';
 import { PlayersPage } from './pages/Players';
 import { TierListPage } from './pages/TierList';
@@ -39,10 +44,15 @@ export default function App() {
           <Route path="/tier-list" element={<TierListPage />} />
           <Route path="/heroes/:slug/:tab?" element={<HeroPage />} />
           <Route path="/items" element={<ItemsPage />} />
+          <Route path="/items/:slug" element={<ItemPage />} />
           <Route path="/builds" element={<BuildsPage />} />
           <Route path="/players" element={<PlayersPage />} />
           <Route path="/players/:accountId" element={<PlayerPage />} />
           <Route path="/me" element={<MeRedirect />} />
+          <Route path="/matches" element={<MatchesPage />} />
+          <Route path="/matches/:matchId" element={<MatchPage />} />
+          <Route path="/patches" element={<PatchesPage />} />
+          <Route path="/leaderboard" element={<LeaderboardPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AnimatePresence>

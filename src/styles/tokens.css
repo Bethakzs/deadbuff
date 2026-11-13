@@ -55,6 +55,10 @@
   --pos-pick-rgb: 111 168 240;
   --pos-support-rgb: 92 204 140;
 
+  /* the two teams on the match page: Hidden King (amber) / Archmother (sapphire) */
+  --team0-rgb: 232 160 72;
+  --team1-rgb: 104 152 232;
+
   /* per-hero accent; overridden inline on hero pages / cards */
   --hero: 217 169 91;
 
@@ -62,6 +66,9 @@
   --font-display: 'Big Shoulders Display', 'Oswald', 'Arial Narrow', sans-serif;
   --font-body: 'Barlow', 'Fira Sans', 'Segoe UI', system-ui, sans-serif;
   --font-serif: 'Cormorant Garamond', Georgia, serif;
+  /* font-size-adjust paired with every --font-display / --font-body declaration (see the Cyrillic block) */
+  --display-adjust: none;
+  --body-adjust: none;
   /* display headings: a touch of air between letters, words and lines */
   --display-tracking: 0.035em;
   --display-word: 0.08em;
@@ -83,12 +90,22 @@
   --shadow-2: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 60px -20px rgb(0 0 0 / 0.85);
 }
 
-/* Big Shoulders and Barlow have no Cyrillic: Ukrainian swaps in the closest Cyrillic-capable pair.
-   (Google Fonts serves them per unicode-range, so English visitors never download them.) */
-:root[lang='uk'] {
+/* Big Shoulders and Barlow have no Cyrillic: Ukrainian and Russian swap in the closest Cyrillic-capable pair.
+   (Google Fonts serves them per unicode-range, so Latin-only visitors never download them.)
+   German and Spanish keep Big Shoulders + Barlow (their latin-ext subset covers ä ö ü ß ñ á …).
+
+   Oswald is ~22% wider than Big Shoulders at the same cap height and Fira Sans has a taller x-height
+   than Barlow, so the whole UI looked "zoomed in" after switching EN → UA. font-size-adjust rescales
+   the glyphs only (computed font-size, line-heights and layout stay as designed):
+   - Oswald caps 0.81 → 0.73 em: about the same ink area as Big Shoulders (a bit shorter, a bit wider)
+   - Fira Sans x-height 0.53 → 0.51 em = Barlow's
+   Measured with canvas measureText at 100px; browsers without font-size-adjust just skip it. */
+:root:is([lang='uk'], [lang='ru']) {
   --font-display: 'Oswald', 'Arial Narrow', sans-serif;
   --font-body: 'Fira Sans', 'Segoe UI', system-ui, sans-serif;
+  --display-adjust: cap-height 0.73;
+  --body-adjust: ex-height 0.51;
   --display-tracking: 0.03em;
   --display-word: 0.06em;
-  --display-leading: 1.12;
+  --display-leading: 1.08;
 }

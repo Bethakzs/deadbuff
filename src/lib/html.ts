@@ -47,6 +47,20 @@ export function sanitizeHtml(html: string | undefined | null, trim = true): stri
   return out;
 }
 
+/**
+ * Hero lore paragraphs. The API separates them with "\n" for some heroes and with "<br><br>" for
+ * others (Graves, Danny…), and may wrap quotes in <span class="italics"> / <i> — so the paragraphs
+ * are HTML fragments: render them through sanitizeHtml(), or stripHtml() for plain text.
+ * Pure string code — also used by the Node prerender.
+ */
+export function loreParagraphs(text: string | undefined | null): string[] {
+  if (!text) return [];
+  return text
+    .split(/(?:\s*<br\s*\/?>\s*)+|\n+/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
 /** Plain-text version (for meta tags / search). */
 export function stripHtml(html: string | undefined | null): string {
   if (!html) return '';

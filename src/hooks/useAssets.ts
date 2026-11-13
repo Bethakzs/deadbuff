@@ -1,8 +1,9 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { useT } from '../i18n';
-import { fetchBuildTags, fetchGenericData, fetchHeroes, fetchItems, fetchPatches, fetchRanks } from '../lib/api';
+import { fetchBigPatchDays, fetchBuildTags, fetchGenericData, fetchHeroes, fetchItems, fetchPatches, fetchRanks, fetchUpgradesEn } from '../lib/api';
 import { heroSlug } from '../lib/heroes';
+import { isShopItem, itemSlug } from '../lib/items';
 import { lanesFromInfo } from '../lib/lanes';
 import type { Hero, Item } from '../lib/types';
 
@@ -51,14 +52,15 @@ export function useHeroes() {
   };
 }
 
-export function useItems() {
+/** `enabled = false` lets a component use items only when it needs them (e.g. the header search before typing). */
+export function useItems(enabled = true) {
   const { meta } = useT();
-  const q = useQuery({ queryKey: ['items', meta.api], queryFn: ({ signal }) => fetchItems(meta.api, signal), ...STATIC });
+  const q = useQuery({ queryKey: ['items', meta.api], queryFn: ({ signal }) => fetchItems(meta.api, signal), ...STATIC, enabled });
   const data = useMemo(() => {
     const all = q.data ?? [];
     const byId = new Map<number, Item>(all.map((i) => [i.id, i]));
     const byClass = new Map<string, Item>(all.map((i) => [i.class_name, i]));
-    const shop = all.filter((i) => i.type === 'upgrade' && i.shopable && !i.disabled);
+    const shop = all.filter(isShopItem);
     return { all, byId, byClass, shop };
   }, [q.data]);
   return { ...q, ...data };
@@ -84,4 +86,33 @@ export function useLanes() {
 
 export function usePatches() {
   return useQuery({ queryKey: ['patches'], queryFn: ({ signal }) => fetchPatches(signal), staleTime: 30 * 60_000 });
+}
+
+export function useBigPatchDays() {
+  return useQuery({ queryKey: ['patch-big-days'], queryFn: ({ signal }) => fetchBigPatchDays(signal), staleTime: 30 * 60_000 });
+}
+
+/**
+ * Shop items keyed by URL slug. Slugs come from the ENGLISH name in every UI language
+ * ("/de/items/mystic-burst"), so outside English the English upgrade names are loaded too.
+ */
+export function useShopItemSlugs(enabled = true) {
+  const { meta } = useT();
+  const items = useItems(enabled);
+  const isEn = meta.api === 'english';
+  const en = useQuery({ queryKey: ['upgrades', 'english'], queryFn: ({ signal }) => fetchUpgradesEn(signal), enabled: enabled && !isEn, ...STATIC });
+  const data = useMemo(() => {
+    const enName = new Map((isEn ? items.shop : en.data ?? []).map((i) => [i.id, i.name]));
+    const slugOf = new Map<number, string>();
+    const bySlug = new Map<string, Item>();
+    for (const it of items.shop) {
+      const name = enName.get(it.id);
+      if (!name) continue;
+      const slug = itemSlug(name);
+      slugOf.set(it.id, slug);
+      bySlug.set(slug, it);
+    }
+    return { slugOf, bySlug, enName };
+  }, [isEn, items.shop, en.data]);
+  return { ...data, isLoading: items.isLoading || (!isEn && en.isLoading), error: items.error ?? en.error };
 }

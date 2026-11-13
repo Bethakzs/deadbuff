@@ -1,4 +1,5 @@
 import { fmtFlex } from './format';
+import { heroSlug } from './heroes';
 import type { AbilityTooltipDetails, Item, ItemProperty } from './types';
 
 export type Slot = 'weapon' | 'vitality' | 'spirit';
@@ -8,7 +9,10 @@ export const SLOTS: Slot[] = ['weapon', 'vitality', 'spirit'];
 
 export const TIER_ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
 
-export const TIER_COST: Record<number, number> = { 1: 800, 2: 1600, 3: 3200, 4: 6400, 5: 9999 };
+export const TIER_COST: Record<number, number> = { 1: 800, 2: 1600, 3: 3200, 4: 6400 };
+
+/** Tier 5 exists in the asset dump but not in the game (17 items, all priced 9999) — never show them. */
+export const MAX_TIER = 4;
 
 /** Ability point cost of each upgrade tier (T1, T2, T3). */
 export const UPGRADE_POINTS = [1, 2, 5];
@@ -16,7 +20,10 @@ export const UPGRADE_POINTS = [1, 2, 5];
 export const itemImage = (it?: Item) =>
   it ? it.shop_image_webp ?? it.shop_image ?? it.image_webp ?? it.image ?? '' : '';
 
-export const isShopItem = (it: Item) => it.type === 'upgrade' && it.shopable !== false && !it.disabled;
+/** URL slug of a shop item, from its ENGLISH name ("Mystic Burst" → "mystic-burst"). */
+export const itemSlug = heroSlug;
+
+export const isShopItem = (it: Item) => it.type === 'upgrade' && it.shopable !== false && !it.disabled && (it.item_tier ?? 1) <= MAX_TIER;
 
 const humanize = (key: string) =>
   key
@@ -72,6 +79,32 @@ function parseTooltip(item: Item): AbilityTooltipDetails | null {
     }
   }
   return td;
+}
+
+/**
+ * The ability's own description. Four abilities (Graves' Borrowed Decree, Mina's Rake, Silver's
+ * Boot Kick, Solomon's Develop Queen) have no `description.desc` at all — Valve keeps their text
+ * in the tooltip sections instead, localised the same way, so fall back to those.
+ */
+export function abilityDescription(item: Item): string {
+  const d = item.description ?? {};
+  return d.desc ?? d.active ?? d.passive ?? tooltipText(item).join('<br><br>');
+}
+
+/** Tooltip sections with real text — empty ones and raw loc tokens ("#ability_x_desc") are dropped. */
+function tooltipText(item: Item): string[] {
+  return (parseTooltip(item)?.info_sections ?? [])
+    .map((s) => (s.loc_string ?? '').trim())
+    .filter((x) => x && !x.startsWith('#'));
+}
+
+/**
+ * Only the ability's own text, for the one-line preview. When the fallback has several sections the
+ * first is the hero's innate (the game shows it above the ability), so the last one is the ability.
+ */
+export function abilityOwnText(item: Item): string {
+  const d = item.description ?? {};
+  return d.desc ?? d.active ?? d.passive ?? tooltipText(item).at(-1) ?? '';
 }
 
 /** Headline numbers for an ability card: cooldown, charges, damage, etc. */

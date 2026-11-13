@@ -29,8 +29,8 @@ function HeroHeader({ hero }: { hero: Hero }) {
   const row = rows.find((r) => r.hero.id === hero.id);
   const wrRank = row ? [...rows].sort((a, b) => b.winRate - a.winRate).findIndex((r) => r.hero.id === hero.id) + 1 : 0;
   const role = t(`role.${roleOf(hero)}` as MsgKey);
-  // The SVG logotype only exists in English — other languages get the typeset name.
-  const useLogo = lang === 'en' && hero.images.name_image;
+  // The SVG logotype spells the English name — use it whenever the localised name is the same, else typeset it.
+  const useLogo = hero.name === hero.name_en && hero.images.name_image;
   const { lanes, agg } = useLaneAgg();
   const best = useMemo(() => (agg ? bestLane(heroLaneProfile(agg, hero.id, lanes)) : undefined), [agg, hero.id, lanes]);
 
@@ -66,8 +66,11 @@ function HeroHeader({ hero }: { hero: Hero }) {
           <motion.div
             key={`${hero.id}-${lang}`}
             className="hero-head__name"
-            initial={{ clipPath: 'inset(0 100% 0 0)' }}
-            animate={{ clipPath: 'inset(0 0% 0 0)' }}
+            // The name has a wide glow (drop-shadow / text-shadow): reveal it with generous negative
+            // insets (same units at both ends so it interpolates) and drop the clip once done,
+            // otherwise the glow is cut into a hard-edged box
+            initial={{ clipPath: 'inset(-100% 140% -100% -40%)' }}
+            animate={{ clipPath: 'inset(-100% -40% -100% -40%)', transitionEnd: { clipPath: 'none' } }}
             transition={{ delay: 0.15, duration: 0.9, ease: [0.65, 0, 0.35, 1] }}
           >
             {useLogo ? (

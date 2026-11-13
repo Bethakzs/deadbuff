@@ -1,5 +1,7 @@
 import { motion } from 'framer-motion';
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useShopItemSlugs } from '../hooks/useAssets';
 import type { ItemRow } from '../hooks/useHeroData';
 import { useT } from '../i18n';
 import { fmtCompact, fmtInt, fmtPct, fmtTime } from '../lib/format';
@@ -13,6 +15,7 @@ type SortKey = 'name' | 'winRate' | 'pickRate' | 'buy' | 'matches' | 'cost';
 /** Sortable, filterable item stats table (used on hero pages and the items page). */
 export function ItemTable({ rows }: { rows: ItemRow[] }) {
   const { t, meta } = useT();
+  const { slugOf } = useShopItemSlugs();
   const [slot, setSlot] = useState<'all' | Slot>('all');
   const [tier, setTier] = useState<number>(0);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'pickRate', dir: -1 });
@@ -96,7 +99,13 @@ export function ItemTable({ rows }: { rows: ItemRow[] }) {
                   <div className="item-cell">
                     <ItemIcon item={r.item} stat={r.stat} pickRate={r.pickRate} size="sm" />
                     <div>
-                      <div className="item-cell__name">{r.item.name}</div>
+                      {slugOf.has(r.item.id) ? (
+                        <Link to={`/items/${slugOf.get(r.item.id)}`} className="item-cell__name">
+                          {r.item.name}
+                        </Link>
+                      ) : (
+                        <div className="item-cell__name">{r.item.name}</div>
+                      )}
                       <div className={`item-cell__sub slot-text-${r.item.item_slot_type}`}>
                         {t(`slot.${r.item.item_slot_type as Slot}`)} · {t('item.tierShort', { n: r.item.item_tier ?? 0 })}
                       </div>

@@ -1,5 +1,5 @@
 import { animate, motion, useInView, useMotionValue, useTransform } from 'framer-motion';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useT } from '../i18n';
 import type { Tier } from '../lib/heroes';
 
@@ -18,9 +18,22 @@ export function SectionTitle({ eyebrow, title, right, id }: { eyebrow?: string; 
 }
 
 /* --------------------------------- panel -------------------------------- */
-export function Panel({ children, className = '', title, right }: { children: ReactNode; className?: string; title?: ReactNode; right?: ReactNode }) {
+export function Panel({
+  children,
+  className = '',
+  title,
+  right,
+  style,
+}: {
+  children: ReactNode;
+  className?: string;
+  title?: ReactNode;
+  right?: ReactNode;
+  /** only for CSS custom properties (e.g. a lane colour) */
+  style?: CSSProperties;
+}) {
   return (
-    <section className={`panel ${className}`}>
+    <section className={`panel ${className}`} style={style}>
       {title && (
         <header className="panel__head">
           <h3 className="panel__title">{title}</h3>

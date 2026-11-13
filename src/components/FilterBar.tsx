@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { PERIOD_DAYS, RANK_OPTIONS, useFilters } from '../lib/filters';
 import { Segmented } from './UI';
 
-function RankSelect() {
+export function RankSelect() {
   const { rank, setRank } = useFilters();
   const { t } = useT();
   const ranks = useRanks();

@@ -1,11 +1,12 @@
 import { motion } from 'framer-motion';
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { FilterBar } from '../components/FilterBar';
 import { ItemIcon } from '../components/ItemIcon';
 import { ItemTable } from '../components/ItemTable';
 import { ErrorState, Page, Segmented, SkeletonRows } from '../components/UI';
 import { WinRate } from '../components/WinRate';
-import { useItems } from '../hooks/useAssets';
+import { useItems, useShopItemSlugs } from '../hooks/useAssets';
 import { useHeroItemRows, type ItemRow } from '../hooks/useHeroData';
 import { useT } from '../i18n';
 import { useDocumentMeta } from '../lib/seo';
@@ -15,11 +16,13 @@ import { SLOTS, TIER_COST, TIER_ROMAN, type Slot } from '../lib/items';
 function Shop({ rows }: { rows: ItemRow[] }) {
   const { t } = useT();
   const { shop } = useItems();
+  const { slugOf } = useShopItemSlugs();
   const [slot, setSlot] = useState<Slot>('weapon');
   const statById = useMemo(() => new Map(rows.map((r) => [r.item.id, r])), [rows]);
   const tiers = [1, 2, 3, 4].map((tier) =>
     shop
-      .filter((i) => i.item_slot_type === slot && (tier === 4 ? (i.item_tier ?? 0) >= 4 : i.item_tier === tier))
+      // items without stats for these filters are hidden (owner: "no data" cells are noise)
+      .filter((i) => statById.has(i.id) && i.item_slot_type === slot && i.item_tier === tier)
       .sort((a, b) => (statById.get(b.id)?.winRate ?? 0) - (statById.get(a.id)?.winRate ?? 0)),
   );
 
@@ -42,7 +45,7 @@ function Shop({ rows }: { rows: ItemRow[] }) {
             </header>
             <div className="shop__items">
               {list.map((it, i) => {
-                const r = statById.get(it.id);
+                const r = statById.get(it.id)!; // the list only keeps items with stats
                 return (
                   <motion.div
                     key={it.id}
@@ -51,17 +54,15 @@ function Shop({ rows }: { rows: ItemRow[] }) {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: ti * 0.05 + i * 0.015, duration: 0.3 }}
                   >
-                    <ItemIcon item={it} stat={r?.stat} pickRate={r?.pickRate} />
+                    <ItemIcon item={it} stat={r.stat} pickRate={r.pickRate} />
                     <div className="shop-item__text">
-                      <span className="shop-item__name">{it.name}</span>
-                      {r ? (
-                        <span className="shop-item__stats">
-                          <WinRate value={r.winRate} />
-                          <span className="muted num">{fmtPct(r.pickRate)}</span>
-                        </span>
-                      ) : (
-                        <span className="muted shop-item__stats">{t('state.noData')}</span>
-                      )}
+                      <Link to={`/items/${slugOf.get(it.id) ?? ''}`} className="shop-item__name">
+                        {it.name}
+                      </Link>
+                      <span className="shop-item__stats">
+                        <WinRate value={r.winRate} />
+                        <span className="muted num">{fmtPct(r.pickRate)}</span>
+                      </span>
                     </div>
                   </motion.div>
                 );

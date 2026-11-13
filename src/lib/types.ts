@@ -331,6 +331,13 @@ export interface PlayerRank {
   subrank: number;
 }
 
+/** /players/rank?account_ids= — the same rank for several accounts at once. */
+export interface PlayerRankRow extends PlayerRank {
+  account_id: number;
+  /** null when no recent ranked match of theirs reports a rank */
+  last_match: { start_time: number } | null;
+}
+
 /** /players/{account_id}/mate-stats row. */
 export interface MateStat {
   mate_id: number;
@@ -345,4 +352,94 @@ export interface SteamProfile {
   avatarmedium?: string;
   avatarfull?: string;
   profileurl?: string;
+}
+
+/* ------------------------- item stats buckets ------------------------ */
+
+/** item-stats with `bucket=hero` (bucket = hero id) or `bucket=game_time_min` (bucket = buy minute). */
+export interface ItemBucketStat extends ItemStat {
+  bucket: number;
+}
+
+/* ------------------------------ matches ------------------------------ */
+/* /matches/{id}/metadata — only the fields we render (the payload is ~1 MB). */
+
+export interface MatchItemEvent {
+  game_time_s: number;
+  item_id: number;
+  /** 0 for a purchase; non-zero rows are ability unlocks/upgrades or swaps */
+  upgrade_id: number;
+  sold_time_s: number;
+  flags: number;
+}
+
+export interface MatchStatSnapshot {
+  time_stamp_s: number;
+  net_worth: number;
+  level?: number;
+  player_damage?: number;
+  player_damage_taken?: number;
+  player_healing?: number;
+  self_healing?: number;
+  boss_damage?: number;
+  creep_damage?: number;
+  neutral_damage?: number;
+  creep_kills?: number;
+  neutral_kills?: number;
+  denies?: number;
+  shots_hit?: number;
+  shots_missed?: number;
+  max_health?: number;
+}
+
+export interface MatchPlayer {
+  account_id: number;
+  player_slot: number;
+  team: number;
+  hero_id: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  net_worth: number;
+  last_hits: number;
+  denies: number;
+  level: number;
+  assigned_lane?: number;
+  abandon_match_time_s?: number;
+  items: MatchItemEvent[];
+  stats: MatchStatSnapshot[];
+  /** one entry per death of THIS player, naming the killer's slot */
+  death_details?: { game_time_s: number; killer_player_slot?: number }[];
+}
+
+export interface MatchInfo {
+  match_id: number;
+  start_time: number;
+  duration_s: number;
+  winning_team: number;
+  game_mode: number;
+  match_mode: number;
+  average_badge_team0?: number;
+  average_badge_team1?: number;
+  players: MatchPlayer[];
+  objectives?: { team: number; team_objective_id: number; destroyed_time_s: number }[];
+  mid_boss?: { team_killed: number; team_claimed: number; destroyed_time_s: number }[];
+}
+
+export interface MatchMetadata {
+  match_info: MatchInfo;
+  hero_build_ids?: Record<string, number>;
+}
+
+/* ---------------------------- leaderboard ---------------------------- */
+
+export type Region = 'Europe' | 'NAmerica' | 'SAmerica' | 'Asia' | 'Oceania';
+
+export interface LeaderboardEntry {
+  account_name: string;
+  /** Valve only publishes the name: when several accounts share it, every candidate is listed */
+  possible_account_ids: number[];
+  rank: number;
+  top_hero_ids: number[];
+  badge_level?: number;
 }

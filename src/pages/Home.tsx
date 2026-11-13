@@ -5,7 +5,7 @@ import { BuildCard } from '../components/BuildCard';
 import { FilterBar } from '../components/FilterBar';
 import { HeroCard } from '../components/HeroCard';
 import { HeroChip } from '../components/HeroChip';
-import { HeroSearch } from '../components/HeroSearch';
+import { SiteSearch } from '../components/SiteSearch';
 import { CountUp, Diamond, Empty, ErrorState, Page, Panel, SectionTitle, Segmented, Skeleton } from '../components/UI';
 import { MeterBar, WinRate, WinRateBar } from '../components/WinRate';
 import { useHeroes, useItems, usePatches } from '../hooks/useAssets';
@@ -19,7 +19,7 @@ import { heroMatches, useRoleOptions, type RoleFilter } from './Heroes';
 
 /* --------------------------- rotating showcase --------------------------- */
 function Showcase({ rows }: { rows: HeroRow[] }) {
-  const { t, lang } = useT();
+  const { t } = useT();
   const featured = useMemo(() => [...rows].sort((a, b) => b.score - a.score).slice(0, 5), [rows]);
   const [i, setI] = useState(0);
   useEffect(() => {
@@ -36,8 +36,8 @@ function Showcase({ rows }: { rows: HeroRow[] }) {
       </div>
     );
 
-  // The SVG logotype is English-only: use it for EN, a typeset name for other languages.
-  const useLogo = lang === 'en' && cur.hero.images.name_image;
+  // The SVG logotype spells the English name — use it whenever the localised name is the same, else typeset it.
+  const useLogo = cur.hero.name === cur.hero.name_en && cur.hero.images.name_image;
 
   return (
     <div className="showcase" style={{ ['--hero' as string]: heroRgb(cur.hero) }}>
@@ -191,7 +191,7 @@ export function HomePage() {
               {t('home.lead')}
             </motion.p>
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55, duration: 0.5 }}>
-              <HeroSearch big />
+              <SiteSearch big />
               <div className="banner__quick">
                 <Link to="/tier-list" className="chip">
                   {t('home.chipTier')}
@@ -300,7 +300,15 @@ export function HomePage() {
             </div>
           </div>
           <aside>
-            <SectionTitle eyebrow={t('home.changelog')} title={t('home.patches')} />
+            <SectionTitle
+              eyebrow={t('home.changelog')}
+              title={t('home.patches')}
+              right={
+                <Link to="/patches" className="link-more">
+                  {t('patch.cta')} →
+                </Link>
+              }
+            />
             <ul className="patch-list">
               {patches.isLoading
                 ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} h={64} r={10} />)

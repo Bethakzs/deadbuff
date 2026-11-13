@@ -296,7 +296,7 @@ export function HeroOverview({ hero, abilities }: { hero: Hero; abilities: Item[
                   <AbilityCard ability={a} index={i} />
                 </motion.div>
               ))
-            : Array.from({ length: 4 }, (_, i) => <Skeleton key={i} h={300} r={12} />)}
+            : Array.from({ length: 4 }, (_, i) => <Skeleton key={i} h={118} r={12} />)}
         </div>
         <SkillOrder hero={hero} abilities={abilities} />
         <TopBuilds hero={hero} abilities={abilities} />

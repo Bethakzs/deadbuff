@@ -9,6 +9,7 @@ import { useMateStats, useMatchHistory, usePlayerHeroStats, usePlayerRank } from
 import { useSteamProfiles } from '../hooks/useStats';
 import { useT } from '../i18n';
 import { fmtCompact, fmtNum, fmtTime } from '../lib/format';
+import { heroRgb } from '../lib/heroes';
 import { setMe, useMe } from '../lib/me';
 import { useDocumentMeta } from '../lib/seo';
 import type { PlayerMatch } from '../lib/types';
@@ -16,6 +17,10 @@ import { RankEmblem } from './Players';
 
 /** Deadlock "normal" matchmaking games only — street brawl etc. would skew the numbers. */
 const NORMAL_MODE = 1;
+
+/** Normal-mode matches, newest first (also used by the matches page for "my recent matches"). */
+export const normalMatches = (list: PlayerMatch[] = []) =>
+  [...list].filter((m) => m.game_mode === NORMAL_MODE).sort((a, b) => b.start_time - a.start_time);
 const RECENT = 20;
 const STEP = 20;
 
@@ -69,34 +74,40 @@ function RecentForm({ matches }: { matches: PlayerMatch[] }) {
   );
 }
 
-function MatchList({ matches }: { matches: PlayerMatch[] }) {
+/** Match history; every row opens the match page. */
+export function MatchList({ matches, title }: { matches: PlayerMatch[]; title?: string }) {
   const { t, ago } = useT();
   const heroes = useHeroes();
   const [visible, setVisible] = useState(STEP);
   return (
     <section>
-      <h2 className="display player-section-title">{t('player.matches')}</h2>
+      <h2 className="display player-section-title">{title ?? t('player.matches')}</h2>
       <ol className="match-list">
         {matches.slice(0, visible).map((m, i) => {
           const hero = heroes.byId.get(m.hero_id);
           return (
-            <motion.li
-              key={m.match_id}
-              className={`match-row ${won(m) ? 'is-win' : 'is-loss'}`}
-              initial={{ opacity: 0, x: -6 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: Math.min((i % STEP) * 0.02, 0.3) }}
-            >
-              <span className="match-row__result">{won(m) ? t('player.win') : t('player.loss')}</span>
-              {hero ? <HeroChip hero={hero} size={34} /> : <span className="muted">#{m.hero_id}</span>}
-              <span className="match-row__kda num">
-                {m.player_kills} / {m.player_deaths} / {m.player_assists}
-              </span>
-              <span className="match-row__souls souls num">{fmtCompact(m.net_worth)}</span>
-              <span className="match-row__time num muted" title={t('player.duration')}>
-                {fmtTime(m.match_duration_s)}
-              </span>
-              <span className="match-row__ago muted">{ago(m.start_time)}</span>
+            <motion.li key={m.match_id} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min((i % STEP) * 0.02, 0.3) }}>
+              <Link to={`/matches/${m.match_id}`} className={`match-row ${won(m) ? 'is-win' : 'is-loss'}`} title={t('match.open')}>
+                <span className="match-row__result">{won(m) ? t('player.win') : t('player.loss')}</span>
+                {hero ? (
+                  <span className="match-row__hero" style={{ ['--hero' as string]: heroRgb(hero) }}>
+                    <HeroAvatar hero={hero} size={34} />
+                    <span className="match-row__hero-name">{hero.name}</span>
+                  </span>
+                ) : (
+                  <span className="muted">#{m.hero_id}</span>
+                )}
+                <span className="match-row__kda num">
+                  {m.player_kills} / {m.player_deaths} / {m.player_assists}
+                </span>
+                <span className="match-row__souls souls num">{fmtCompact(m.net_worth)}</span>
+                <span className="match-row__time num muted" title={t('player.duration')}>
+                  {fmtTime(m.match_duration_s)}
+                </span>
+                <span className="match-row__ago muted">
+                  {ago(m.start_time)} <span className="match-row__go">→</span>
+                </span>
+              </Link>
             </motion.li>
           );
         })}
@@ -196,10 +207,7 @@ export function PlayerPage() {
   const rank = usePlayerRank(accountId);
   const history = useMatchHistory(accountId);
   const heroes = useHeroes();
-  const matches = useMemo(
-    () => [...(history.data ?? [])].filter((m) => m.game_mode === NORMAL_MODE).sort((a, b) => b.start_time - a.start_time),
-    [history.data],
-  );
+  const matches = useMemo(() => normalMatches(history.data), [history.data]);
   const name = profile?.personaname ?? `#${accountId}`;
   const mainHero = heroes.byId.get(matches[0]?.hero_id ?? -1);
 

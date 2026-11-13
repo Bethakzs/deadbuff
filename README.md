@@ -5,12 +5,12 @@ win rate, every ability explained (cooldowns, T1/T2/T3 upgrades), popular skill 
 player lookup with match history.
 
 All data comes live from the public [Deadlock API](https://deadlock-api.com) — no backend needed.
-The UI is available in English (`/…`) and Ukrainian (`/uk/…`); hero, ability and item texts use the game's official translation.
+The UI is available in English (`/…`), Ukrainian (`/uk/…`), German (`/de/…`), Spanish (`/es/…`) and Russian (`/ru/…`); hero, ability and item texts use the game's official translation.
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm run build      # dist/ — vite build + SEO prerender (452 static pages, sitemap, robots)
+npm run build      # dist/ — vite build + SEO prerender (~1925 static pages, sitemap, robots)
 npm run preview    # serves dist/ like Cloudflare Pages → http://localhost:4173
 ```
 
@@ -28,9 +28,11 @@ npm run preview    # serves dist/ like Cloudflare Pages → http://localhost:417
 5. Google: [Search Console](https://search.google.com/search-console) → add the domain → submit `https://your-domain/sitemap.xml`.
 
 Routing on Cloudflare Pages: `/heroes/haze` is served from `heroes/haze.html` (prerendered), player
-profiles are rewritten to the SPA shell `app.html` by the generated `_redirects`, anything else falls back
+profiles are rewritten to the SPA shell (`/app`) by the generated `_redirects`, anything else falls back
 to `index.html`. `vercel.json` provides the same for Vercel.
 
-**For AI agents / contributors:** read [`AGENTS.md`](AGENTS.md) — architecture, API reference, design system and conventions.
+**For AI agents / contributors:** read [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) — status, infrastructure,
+decision history and roadmap (Ukrainian), then [`AGENTS.md`](AGENTS.md) — architecture, API reference, design
+system and conventions.
 
 Not affiliated with Valve. Deadlock and its art are © Valve Corporation.

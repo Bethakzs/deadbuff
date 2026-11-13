@@ -11,6 +11,7 @@ import type {
   PlayerHeroStat,
   PlayerMatch,
   PlayerRank,
+  PlayerRankRow,
   SteamSearchResult,
   CounterStat,
   Hero,
@@ -18,9 +19,13 @@ import type {
   HeroBuildStat,
   HeroStat,
   Item,
+  ItemBucketStat,
   ItemStat,
+  LeaderboardEntry,
+  MatchMetadata,
   Patch,
   Rank,
+  Region,
   SteamProfile,
   SynergyStat,
 } from './types';
@@ -83,6 +88,12 @@ export const fetchRanks = (language: string, signal?: AbortSignal) => get<Rank[]
 
 export const fetchPatches = (signal?: AbortSignal) => get<Patch[]>('/patches', {}, signal);
 
+/** ISO timestamps of the big (usually bi-weekly) gameplay patches, newest first. */
+export const fetchBigPatchDays = (signal?: AbortSignal) => get<string[]>('/patches/big-days', {}, signal);
+
+/** English names of shop upgrades only — item page slugs are English in every UI language. */
+export const fetchUpgradesEn = (signal?: AbortSignal) => get<Item[]>('/assets/items/by-type/upgrade', { language: 'english' }, signal);
+
 export const fetchBuildTags = (language: string, signal?: AbortSignal) =>
   get<BuildTag[]>('/assets/build-tags', { language }, signal);
 
@@ -97,6 +108,18 @@ export const fetchHeroStats = (f: StatFilters, signal?: AbortSignal) =>
 
 export const fetchItemStats = (f: StatFilters, heroId?: number, signal?: AbortSignal) =>
   get<ItemStat[]>('/analytics/item-stats', { ...filterParams(f), hero_id: heroId, min_matches: 50 }, signal);
+
+/**
+ * Item stats split by hero (`bucket=hero`, bucket = hero id) or by the minute the item was bought
+ * (`bucket=game_time_min`). One call covers every item (~1.5–2 MB raw, ~0.5 MB gzipped), so it is
+ * cached once and shared by all item pages.
+ */
+export const fetchItemStatsBucket = (f: StatFilters, bucket: 'hero' | 'game_time_min', signal?: AbortSignal) =>
+  get<ItemBucketStat[]>('/analytics/item-stats', { ...filterParams(f), bucket, min_matches: 50 }, signal);
+
+/** Hero stats inside a fixed time window (patch before/after comparison). */
+export const fetchHeroStatsWindow = (min: number, max: number, minBadge: number | undefined, signal?: AbortSignal) =>
+  get<HeroStat[]>('/analytics/hero-stats', { min_unix_timestamp: min, max_unix_timestamp: max, min_average_badge: minBadge }, signal);
 
 export const fetchCounterStats = (f: StatFilters, signal?: AbortSignal) =>
   get<CounterStat[]>('/analytics/hero-counter-stats', { ...filterParams(f), min_matches: 100 }, signal);
@@ -178,8 +201,21 @@ export const fetchPlayerHeroStats = (accountId: number, signal?: AbortSignal) =>
 export const fetchPlayerRank = (accountId: number, signal?: AbortSignal) =>
   get<PlayerRank>(`/players/${accountId}/rank`, {}, signal);
 
+/** Ranks of up to 1000 accounts in one call (unranked accounts come back with badge 0). */
+export const fetchPlayerRanks = (accountIds: number[], signal?: AbortSignal) =>
+  accountIds.length
+    ? get<PlayerRankRow[]>('/players/rank', { account_ids: accountIds.join(',') }, signal)
+    : Promise.resolve([] as PlayerRankRow[]);
+
 export const fetchMateStats = (accountId: number, signal?: AbortSignal) =>
   get<MateStat[]>(`/players/${accountId}/mate-stats`, { min_matches_played: 3 }, signal);
+
+/** Full match metadata (players, item purchases, stat snapshots). ~1 MB, immutable once the match is parsed. */
+export const fetchMatch = (matchId: number, signal?: AbortSignal) => get<MatchMetadata>(`/matches/${matchId}/metadata`, {}, signal);
+
+/** Valve's ranked leaderboard (updated hourly), optionally for one hero. */
+export const fetchLeaderboard = (region: Region, heroId?: number, signal?: AbortSignal) =>
+  get<{ entries: LeaderboardEntry[] }>(`/leaderboard/${region}${heroId ? `/${heroId}` : ''}`, {}, signal);
 
 export const fetchSteamProfiles = (accountIds: number[], signal?: AbortSignal) =>
   accountIds.length

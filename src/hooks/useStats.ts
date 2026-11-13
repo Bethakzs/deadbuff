@@ -7,7 +7,10 @@ import {
   fetchCounterStats,
   fetchHeroBuildStats,
   fetchHeroStats,
+  fetchHeroStatsWindow,
   fetchItemStats,
+  fetchItemStatsBucket,
+  fetchLeaderboard,
   fetchLaneStats,
   fetchSteamProfiles,
   fetchSynergyStats,
@@ -15,7 +18,7 @@ import {
 } from '../lib/api';
 import { useFilters } from '../lib/filters';
 import { buildHeroRows } from '../lib/heroes';
-import type { HeroBuild } from '../lib/types';
+import type { HeroBuild, Region } from '../lib/types';
 import { useHeroes } from './useAssets';
 
 /* Analytics refresh hourly on the API side; 10 min client cache is plenty. */
@@ -52,6 +55,37 @@ export function useItemStats(heroId?: number) {
     queryKey: ['item-stats', filters, heroId ?? 'all'],
     queryFn: ({ signal }) => fetchItemStats(filters, heroId, signal),
     ...LIVE,
+  });
+}
+
+/** Item stats per hero or per buy minute, for every item at once (shared by all item pages). */
+export function useItemStatsBucket(bucket: 'hero' | 'game_time_min') {
+  const { filters } = useFilters();
+  return useQuery({
+    queryKey: ['item-stats-bucket', bucket, filters],
+    queryFn: ({ signal }) => fetchItemStatsBucket(filters, bucket, signal),
+    ...LIVE,
+  });
+}
+
+/** Hero stats in a fixed window — past windows never change, so they are cached for an hour. */
+export function useHeroStatsWindow(win: { min: number; max: number } | undefined) {
+  const { filters } = useFilters();
+  return useQuery({
+    queryKey: ['hero-stats-window', win?.min, win?.max, filters.minBadge],
+    queryFn: ({ signal }) => fetchHeroStatsWindow(win!.min, win!.max, filters.minBadge, signal),
+    enabled: !!win && win.max > win.min,
+    staleTime: 60 * 60_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useLeaderboard(region: Region, heroId?: number) {
+  return useQuery({
+    queryKey: ['leaderboard', region, heroId ?? 'all'],
+    queryFn: ({ signal }) => fetchLeaderboard(region, heroId, signal),
+    staleTime: 15 * 60_000,
+    placeholderData: keepPreviousData,
   });
 }
 
