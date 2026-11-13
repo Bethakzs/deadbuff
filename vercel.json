@@ -10,7 +10,7 @@
       "destination": "/app"
     },
     {
-      "source": "/:lang(uk|de|es|ru)?/me",
+      "source": "/:lang(uk|de|es|ru)?/:page(me|login|account|compare)",
       "destination": "/app"
     },
     {

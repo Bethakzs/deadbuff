@@ -6,6 +6,9 @@ import {
   fetchBuilds,
   fetchCounterStats,
   fetchHeroBuildStats,
+  fetchHeroStatsAtRank,
+  fetchItemStatsVsEnemy,
+  fetchTopItemStats,
   fetchHeroStats,
   fetchHeroStatsWindow,
   fetchItemStats,
@@ -181,4 +184,49 @@ export function useSteamProfiles(accountIds: number[]) {
     staleTime: 60 * 60_000,
   });
   return useMemo(() => new Map((q.data ?? []).map((p) => [p.account_id, p])), [q.data]);
+}
+
+/**
+ * Hero stats of matches around a rank: the badge's whole tier (Oracle 4 → Oracle 1–6), last 30 days.
+ * `badge` undefined / 0 = all ranks. `top` = this badge and above (match analysis: "top players").
+ */
+export function useHeroStatsAtRank(badge: number | undefined, top = false) {
+  const tier = badge ? Math.floor(badge / 10) : 0;
+  const min = tier ? (top ? badge : tier * 10 + 1) : undefined;
+  const max = tier && !top ? tier * 10 + 6 : undefined;
+  return useQuery({
+    queryKey: ['hero-stats-rank', min ?? 0, max ?? 0],
+    queryFn: ({ signal }) => fetchHeroStatsAtRank(min, max, 30, signal),
+    staleTime: 60 * 60_000,
+  });
+}
+
+/** Item stats of one hero in matches of Ascendant 1 and above (badge ≥ 101), last 30 days. */
+export const TOP_BADGE = 101;
+export function useTopItemStats(heroId: number | undefined) {
+  return useQuery({
+    queryKey: ['top-item-stats', heroId],
+    queryFn: ({ signal }) => fetchTopItemStats(heroId!, TOP_BADGE, 30, signal),
+    enabled: !!heroId,
+    staleTime: 60 * 60_000,
+  });
+}
+
+/** One hero's item stats against each of the given enemies (draft: "what to build vs this lineup"). */
+export function useItemStatsVsEnemies(heroId: number | undefined, enemyIds: number[]) {
+  const { filters } = useFilters();
+  const results = useQueries({
+    queries: enemyIds.map((enemyId) => ({
+      queryKey: ['item-stats-vs', filters, heroId, enemyId],
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchItemStatsVsEnemy(filters, heroId!, enemyId, signal),
+      enabled: !!heroId,
+      staleTime: 30 * 60_000,
+    })),
+  });
+  const perEnemy = useMemo(
+    () => enemyIds.map((enemyId, i) => ({ enemyId, stats: results[i]?.data ?? [] })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enemyIds.join(), results.map((r) => r.dataUpdatedAt).join()],
+  );
+  return { perEnemy, isLoading: results.some((r) => r.isLoading), error: results.find((r) => r.error)?.error };
 }

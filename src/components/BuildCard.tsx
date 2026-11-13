@@ -6,6 +6,7 @@ import { fmtCompact } from '../lib/format';
 import { itemImage } from '../lib/items';
 import type { Hero, HeroBuild, HeroBuildStat, Item, SteamProfile } from '../lib/types';
 import { AbilityOrderGrid } from './AbilityOrderGrid';
+import { FavButton } from './FavButton';
 import { HeroAvatar } from './HeroChip';
 import { ItemIcon } from './ItemIcon';
 import { Tooltip } from './Tooltip';
@@ -156,6 +157,7 @@ export function BuildCard({ build, stat, profile, abilities, hero, rank, default
             </>
           )}
         </div>
+        <FavButton kind="build" id={b.hero_build_id} />
         <button className="build-card__toggle" aria-expanded={open} aria-label={t(open ? 'build.collapse' : 'build.expand')}>
           <svg viewBox="0 0 12 12" aria-hidden>
             <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" />

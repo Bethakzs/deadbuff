@@ -2,10 +2,11 @@
 
 Dotabuff-style stats site for **Deadlock**: hero win rates and tier list, community builds ranked by real
 match win rate, every ability explained (cooldowns, T1/T2/T3 upgrades), popular skill orders, item stats,
-matchups, match details and player lookup.
+matchups, match details with an item-timing analysis, player lookup, a draft helper, accounts (Steam or
+username) with favourites, a personal dashboard and player comparison.
 
-Live at **https://deadbuff.net** · all data comes straight from the public
-[Deadlock API](https://deadlock-api.com), there is no backend.
+Live at **https://deadbuff.net** · all game data comes from the public [Deadlock API](https://deadlock-api.com)
+through our own edge-cached proxy; a small backend (Cloudflare Pages Functions + D1) handles accounts and favourites.
 UI languages: English (`/…`), Ukrainian (`/uk/…`), German (`/de/…`), Spanish (`/es/…`), Russian (`/ru/…`);
 hero, ability and item texts use the game's own translation.
 
@@ -47,9 +48,11 @@ hero, ability and item texts use the game's own translation.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm run build      # dist/ — vite build + SEO prerender (~1925 static pages, sitemap, robots)
-npm run preview    # serves dist/ like Cloudflare Pages → http://localhost:4173
+npm run dev          # http://localhost:5173 (API called directly; /api/* proxied to :8788)
+npm run dev:api      # backend: Pages Functions + local D1 on :8788 (accounts, favourites, API proxy)
+npm run build        # dist/ — typecheck (app + functions), vite build, SEO prerender (~1930 pages, sitemap, robots)
+npm run preview      # serves dist/ like Cloudflare Pages → http://localhost:4173 (static only)
+npm run preview:full # dist/ + functions + D1 exactly like Pages → http://localhost:8788
 npm run typecheck
 ```
 
@@ -70,10 +73,21 @@ shells — use `%APPDATA%\fnm\node-versions\<version>\installation\node.exe` or 
    then store its URL as the GitHub Actions secret `CF_PAGES_DEPLOY_HOOK` (`.github/workflows/daily-rebuild.yml`).
 5. Google: [Search Console](https://search.google.com/search-console) → add the domain → submit
    `https://your-domain/sitemap.xml`.
+6. **Backend** (accounts + favourites; the API proxy works without it):
+   - Workers & Pages → **D1 SQL Database → Create** (any name, e.g. `deadbuff`). No schema to run — tables
+     are created on first use (`server/db.ts`).
+   - Pages project → Settings → **Bindings → Add → D1 database**: variable name **`DB`** → that database
+     (Production and Preview).
+   - Settings → **Variables and Secrets → Add**: **`SESSION_SECRET`**, type *Secret*, a long random string
+     (≥ 16 chars, e.g. `openssl rand -base64 32`). Changing it logs everybody out.
+   - Optional: `PBKDF2_ITERATIONS` (default 60000 — fits the Free plan CPU limit; set 100000 on Workers Paid),
+     `DEADLOCK_API_KEY` (sent as `X-API-KEY` by the proxy).
+   - Redeploy (bindings apply to new deployments).
 
-Routing: `/heroes/haze` is served from `heroes/haze.html` (prerendered); player and match pages are
-rewritten to the SPA shell (`/app`) by the generated `_redirects`; anything else falls back to
-`index.html`. `vercel.json` mirrors this for Vercel.
+Routing: `/heroes/haze` is served from `heroes/haze.html` (prerendered); player, match, `/me`, `/login`,
+`/account` and `/compare` pages are rewritten to the SPA shell (`/app`) by the generated `_redirects`;
+`_routes.json` sends only `/api/*` to the Functions; anything else falls back to `index.html`.
+`vercel.json` mirrors the static part for Vercel (no Functions there — the SPA then calls the API directly).
 
 Not affiliated with Valve. Deadlock and its art are © Valve Corporation.
 
@@ -98,9 +112,18 @@ Main goals (in priority order):
 3. **Hero pages** — what every ability does (description, cooldowns, T1/T2/T3 upgrades), popular skill order, core items, matchups, base stats, lore.
 4. Item stats (shop view + table + a page per item), a global build browser, match pages, patch impact
    and the ranked leaderboard.
+5. Player tools: **draft helper** (counter-pick / complete the team / team vs team + what to build),
+   **accounts** (Steam OpenID or username + e-mail + password, no e-mail confirmation) with **favourite
+   heroes and builds**, a **personal dashboard** (your WR per hero vs the average at your rank), **compare with
+   a friend** and **match analysis** (your item timings vs top players on the same hero).
 
-There is **no backend**. The site is a static SPA that calls the public
-[Deadlock API](https://api.deadlock-api.com/docs) directly from the browser (CORS `*`).
+The site is a static SPA (+ SEO prerender) on Cloudflare Pages with a **small backend in Pages Functions**
+(`functions/`, shared code in `server/`):
+- `/api/dl/*` — caching proxy for the public [Deadlock API](https://api.deadlock-api.com/docs) (edge cache,
+  stale-while-revalidate) → repeat queries answer in ~10 ms instead of 1–5 s. The SPA falls back to calling the
+  API directly (CORS `*`) whenever the proxy isn't there (dev, Vercel, Function quota exceeded).
+- `/api/auth/*`, `/api/me`, `/api/favorites` — accounts and favourites in **Cloudflare D1** (SQLite).
+
 All hero/item art comes from `assets-bucket.deadlock-api.com`.
 
 UI languages: **English, Ukrainian, German, Spanish, Russian** (EN / UA / DE / ES / RU), picked from the globe
@@ -122,6 +145,7 @@ and join clauses with "—" or "·" instead of ".".
 | Data fetching / cache | @tanstack/react-query 5 |
 | Animation | framer-motion 11 |
 | Tooltips | @floating-ui/react |
+| Backend | Cloudflare Pages Functions (TypeScript, Web APIs only — no Node deps), D1 (SQLite), Cache API. `wrangler` + `@cloudflare/workers-types` are dev-only |
 | Styling | Plain CSS with design tokens (no Tailwind, no CSS-in-JS) |
 | i18n | Own tiny layer in `src/i18n` (typed dictionaries, `Intl.PluralRules`, no library) |
 | Fonts | Google Fonts. EN / DE / ES: Big Shoulders Display (display) + Barlow (body). UA / RU: Oswald + Fira Sans (Big Shoulders/Barlow have no Cyrillic), size-matched with `font-size-adjust` (§8). Cormorant Garamond (serif/lore) for all |
@@ -134,17 +158,25 @@ Versions are **pinned exactly** in `package.json`. Don't bump majors casually.
 
 ```bash
 npm install
-npm run dev          # http://localhost:5173
-npm run build        # tsc -b && vite build && tsx scripts/prerender.ts  -> dist/
+npm run dev          # http://localhost:5173 — Vite; proxies /api/* to :8788
+npm run dev:api      # wrangler pages dev public :8788 — Functions + local D1 (.wrangler/, git-ignored)
+npm run build        # tsc -b && tsc -p functions && vite build && tsx scripts/prerender.ts  -> dist/
 npm run prerender    # re-run only the SEO prerender on an existing dist/ (idempotent)
-npm run preview      # tsx scripts/preview.ts — serves dist/ like Cloudflare Pages on :4173
-npm run typecheck
+npm run preview      # tsx scripts/preview.ts — serves dist/ like Cloudflare Pages on :4173 (no Functions)
+npm run preview:full # wrangler pages dev dist :8788 — the whole production build incl. Functions
+npm run typecheck    # app + functions
 ```
+
+- In `npm run dev` the SPA calls the Deadlock API **directly**; set `VITE_API_PROXY=1` to go through the
+  local proxy instead (needs `npm run dev:api`). Production builds always use the proxy (with the direct fallback).
+- Accounts work in dev only while `npm run dev:api` runs (Vite forwards `/api` to it, keeping the Host header so
+  cookies and the Steam `return_to` stay on `localhost:5173`). The local secret is in the npm script — never reuse it.
+- Steam accepts `http://localhost:5173` as OpenID realm, so "Sign in with Steam" works locally too.
 
 **Local machine note (Windows):** on the owner's machine Node is installed through **fnm** and is not on PATH
 in non-interactive shells — use the fnm install path (`%APPDATA%\fnm\node-versions\<version>\installation\node.exe`)
-or prepend that folder to PATH. `.claude/launch.json` (git-ignored, machine-specific) has `deadbuff-dev` (Vite)
-and `deadbuff-preview` (production preview) configs.
+or prepend that folder to PATH. `.claude/launch.json` (git-ignored, machine-specific) has `deadbuff-dev` (Vite),
+`deadbuff-api` (wrangler, Functions + D1 on :8788) and `deadbuff-preview` (production preview) configs.
 
 ### Deploy — Cloudflare Pages (chosen host)
 Why Cloudflare: free static hosting + registrar at cost + room for a backend later in the same project
@@ -153,21 +185,62 @@ Why Cloudflare: free static hosting + registrar at cost + room for a backend lat
 - Without `SITE_URL` the build still works but skips canonical/hreflang/sitemap (warning in the log).
 - `.github/workflows/daily-rebuild.yml` pings a Pages deploy hook daily (secret `CF_PAGES_DEPLOY_HOOK`) so
   prerendered numbers stay fresh. GitHub pauses scheduled workflows after 60 days without repo activity.
-- Routing: `/x/y` → `x/y.html` (Pages pretty URLs); `_redirects` (generated) rewrites `/players/*`, `/me`
+- Routing: `/x/y` → `x/y.html` (Pages pretty URLs); `_redirects` (generated) rewrites `/players/*`, `/matches/*`,
+  `/me`, `/login`, `/account`, `/compare`
   (+ the same under every language prefix `/uk`, `/de`, `/es`, `/ru`) to the SPA shell `app.html` — the rule target must be **`/app`, not `/app.html`** (Pages 308-redirects
   `*.html` to the extensionless URL, which turned the rewrite into a redirect and lost the player URL). Unknown
   paths → `index.html` (Pages SPA mode — keep NO top-level `404.html`, it would disable that). `vercel.json`
   mirrors this for Vercel (`cleanUrls` + rewrites).
+- `_routes.json` (generated) = `{"include": ["/api/*"]}`: **only `/api/*` invokes a Function** (counted against the
+  Free plan's 100k requests/day); pages, JS, CSS and images stay free static files.
 - Live: https://deadbuff.pages.dev (Pages project `deadbuff`, production branch `main`), domain `deadbuff.net`
   (registered at Namecheap, DNS on Cloudflare).
 
-### Planned stage 2 (backend) — keep the code ready for it
-- Steam login = OpenID 2.0, verified server-side (`check_authentication`) in a Pages Function
-  (`/api/auth/steam/login`, `/api/auth/steam/callback`, `/api/me`), session in an HttpOnly signed cookie.
-- Steam returns SteamID64; Deadlock API uses `account_id` → `lib/steam.ts` (`steam64 − 76561197960265728`).
-- `lib/me.ts` (`useMe`/`setMe`, localStorage "It's me") is the stage-1 stand-in: replace its source with `/api/me`.
-- Own backend calls go through `lib/api.ts` using relative `/api/...` URLs; secrets (session key, Deadlock
-  API key `X-API-KEY`) live only in Cloudflare env vars — never in the frontend bundle.
+### Backend (Pages Functions + D1)
+```
+functions/                       file-based routes (each file = an endpoint)
+  tsconfig.json                  workers types; `tsc -p functions` runs in npm run build
+  api/dl/[[path]].ts             GET  /api/dl/<api path>  — Deadlock API caching proxy
+  api/auth/register.ts           POST { username, email, password }      → { user } + session
+  api/auth/login.ts              POST { login: username|e-mail, password } → { user } + session
+  api/auth/logout.ts             POST                                     → clears the cookies
+  api/auth/steam/login.ts        GET  ?mode=login|link&next=/uk/me        → 302 Steam OpenID
+  api/auth/steam/callback.ts     GET  (from Steam) → verify → sign in / sign up / link → 302 next
+  api/me/index.ts                GET  → { user | null } · DELETE → delete account + favourites
+  api/me/steam.ts                DELETE → unlink Steam (only when the user has a password)
+  api/favorites.ts               GET list · POST {kind,id} | {items:[…]} · DELETE {kind,id} → { items }
+  api/[[rest]].ts                any other /api/* → JSON 404
+server/                          shared code (outside functions/ so it doesn't become routes)
+  env.ts        Env bindings (DB, SESSION_SECRET, PBKDF2_ITERATIONS, DEADLOCK_API_KEY), accountEnv()
+  http.ts       json()/fail(), readJson(), sameOrigin() (CSRF), cookies, safeNext(), base64url
+  session.ts    signed cookie db_session=<userId>.<expires>.<HMAC-SHA256> (HttpOnly, 30 days) + hint cookie db_auth=1
+  password.ts   PBKDF2-SHA256 "pbkdf2_sha256$<rounds>$<salt>$<hash>", constant-time verify, rehash on login when rounds grow
+  db.ts         SCHEMA (created on first "no such table"), users / favorites / auth_throttle queries
+  steam-openid.ts  redirect URL + check_authentication verification
+  auth.ts       currentUser(), validation rules, username from a Steam persona name
+```
+- **Proxy** (`/api/dl`): GET only, sections `assets|analytics|builds|players|matches|leaderboard|patches`. Cache key =
+  path + sorted query in `caches.default`. Per-section policy (`policy()`): fresh time (assets 6 h, analytics/patches
+  1 h, builds/leaderboard 15 min, steam profiles 1 h, player data 2 min, parsed match metadata 30 days) and a
+  stale window during which the old copy is served instantly while a background refresh runs (player data and
+  matches: none). Upstream 404 is cached 1 min; on upstream 5xx the stale copy wins. Every answer that came from
+  the API carries `x-proxy-upstream: 1` (+ `x-cache: hit|stale|miss`); `lib/api.ts` treats a response WITHOUT
+  that header (quota page, HTML fallback, network error) as "proxy unavailable" and switches to the direct API
+  for the rest of the session. Cache API works on the custom domain (not on `*.pages.dev`).
+- **Sessions** are stateless (no sessions table). Logout clears cookies; to log everyone out rotate `SESSION_SECRET`.
+  `db_auth=1` (readable by JS, no secret) lets the SPA skip `/api/me` for guests.
+- **Security**: every POST/DELETE checks the `Origin` header (+ SameSite=Lax cookie); the user id comes only
+  from the session; login is throttled (15 attempts / 15 min / IP), sign-up 6 / hour / IP (`auth_throttle`);
+  unknown logins still spend a full PBKDF2 round (no timing leak); usernames are unique case-insensitively in any
+  script (`username_key` = lower-cased — SQLite NOCASE only folds ASCII). Steam login: nonce in an HttpOnly cookie
+  scoped to `/api/auth/steam` must equal the `n` inside the Steam-signed `return_to`; `check_authentication` must
+  answer `is_valid:true`; `claimed_id` must be `https://steamcommunity.com/openid/id/<17 digits>`.
+- **PBKDF2 rounds**: 60 000 by default because the Free plan allows ~10 ms CPU per request (100 000 rounds ≈ 13 ms).
+  The count lives in each hash: raise `PBKDF2_ITERATIONS` (max 100 000) on Workers Paid and hashes upgrade on next login.
+- SteamID64 → `account_id` = `steam64 − 76561197960265728` (`src/lib/steam.ts`, shared with the server).
+- Frontend: `lib/auth.ts` (`useAuth`, `useAuthActions`, `steamUrl`), `lib/favorites.ts` (`useFavorites`,
+  `<FavoritesSync/>` merges guest favourites into the account after login), `lib/me.ts` (`useMe()` = linked
+  Steam account, else the local "It's me").
 
 ---
 
@@ -202,7 +275,13 @@ src/
     en.ts                  English strings — defines the key set (MsgKey)
     uk.ts / de.ts / es.ts / ru.ts   translations — Record<MsgKey, Msg>, TypeScript fails if a key is missing
   lib/
-    api.ts                 ALL network calls live here (fetch wrapper, endpoints, StatFilters -> params)
+    api.ts                 ALL Deadlock API calls live here (fetch wrapper: proxy /api/dl → direct fallback,
+                           endpoints, StatFilters -> params, dayStart())
+    auth.ts                own backend: useAuth() (only with the db_auth hint cookie), useAuthActions()
+                           (login/register/logout/unlinkSteam/deleteAccount), steamUrl(), own() fetch helper
+    favorites.ts           useFavorites() (server when logged in, localStorage for guests), <FavoritesSync/>
+    draft.ts               draft maths: pairIndex(), scoreHero()/rankPicks() (counter + synergy effects beyond the
+                           heroes' own strength), teamRoles() (missing position), itemsVsLineup()
     types.ts               API response types (only fields we use) + client fields Hero.slug / Hero.name_en
     filters.tsx            FilterProvider/useFilters: rank bracket + period, persisted in localStorage
     heroes.ts              slug, role keys, hero colours/images, abilities lookup, buildHeroRows(), assignTiers()
@@ -215,9 +294,10 @@ src/
                            loreParagraphs() (lore is split by "
 " OR "<br><br>" depending on the hero)
     seo.ts                 useDocumentMeta(title, description) — runtime twin of the prerendered tags
-    steam.ts               SteamID64 ⇄ account_id, parseAccountInput() (links, SteamID3, ids)
-    me.ts                  useMe()/setMe() — "It's me" account id in localStorage (stage-2 → Steam login)
-    match.ts               match page maths: teamTotals(), laneResults() (who won each lane on souls at 10:00),
+    steam.ts               SteamID64 ⇄ account_id, parseAccountInput() (links, SteamID3, ids) — also used by server/
+    me.ts                  useMe() = linked Steam account of the logged-in user, else "It's me" (localStorage,
+                           setMe()/useLocalMe())
+    match.ts               match page maths: purchases(), teamTotals(), laneResults() (who won each lane on souls at 10:00),
                            soulLead(), objectiveEvents(), killMatrix() (who killed whom, from death_details),
                            statAt()/finalStat() over the stat snapshots
     patches.ts             patchTimeline() (changelog posts + big patch days), patchWindows() (7 days before vs
@@ -226,14 +306,18 @@ src/
     useAssets.ts           useHeroes / useItems / useRanks / usePatches (static data, cached forever,
                            fetched in the UI language; heroes merge English slugs with localised text)
     useStats.ts            analytics hooks (hero stats, item stats, counters, synergy, ability orders,
-                           build stats, builds, steam profiles). All keyed by the global filters.
+                           build stats, builds, steam profiles). All keyed by the global filters. Plus
+                           useHeroStatsAtRank() (dashboard / analysis), useTopItemStats() (Ascendant+ item timings),
+                           useItemStatsVsEnemies() (draft)
     useHeroData.ts         derived data: useHeroMatchups(), useHeroItemRows(), useLaneAgg() (lanes + aggregates, header chip only)
-    usePlayer.ts           player queries: steam search, match history, per-hero stats, rank, teammates
+    usePlayer.ts           player queries: steam search, match history, per-hero stats (one or several accounts,
+                           optional period), rank, teammates
   components/
     Layout.tsx             sticky header (scroll-tinted): NAV (4 main tabs) + MoreMenu ("three lines" button with the
-                           MORE sections; inline in the mobile burger), LangSwitch (globe button → dropdown of
-                           native language names),
-                           footer, Logo; sets the document title for non-hero routes
+                           MORE sections; inline in the mobile burger), AccountMenu ("Log in" button, or the avatar
+                           with Dashboard / My profile / Compare / Account / Log out), LangSwitch (globe button →
+                           dropdown of native language names), footer, Logo; mounts <FavoritesSync/>
+    FavButton.tsx          star toggle for a favourite hero (with label, hero header) or build (icon, build card)
     SiteSearch.tsx         header/home search ("/" hotkey, arrows + Enter): heroes (+ a tab word, "haze build" →
                            /heroes/haze/builds), sections (PAGES: "tier list", "my stats", "matches"…, matched on the
                            translated name AND English keywords), shop items (loaded only once the search is used),
@@ -275,8 +359,21 @@ src/
                            item timings). Rows of the profile marked "It’s me" get `.is-me` everywhere
     Patches.tsx            patch impact: patch picker (?patch=YYYY-MM-DD), winners / losers, full before/after table
     Leaderboard.tsx        Valve ranked leaderboard: region switch (?region=), hero dropdown (?hero=slug)
-    Player.tsx             player profile (normal-mode matches only) + MeRedirect for /me. Exports MatchList (every
-                           row is a link to /matches/:id) and normalMatches()
+    Player.tsx             player profile (normal-mode matches only), "It's me" (hidden when Steam is linked),
+                           "Compare with me". Exports MatchList (every row links to /matches/:id, or its
+                           Analysis tab with `analysis`) and normalMatches()
+    MatchAnalysis.tsx      Match → Analysis tab: pick a player, purchases with their minute vs the Ascendant+
+                           average buy minute on that hero (last 30 days), summary, core items skipped
+    Login.tsx              /login: Sign in with Steam + log in / sign up form (?mode=register, ?next=/path).
+                           Exports SteamButton, SteamGlyph
+    Account.tsx            /account: details, Steam link/unlink, log out, delete account
+    Dashboard.tsx          /me: your WR per hero vs the average at your rank, strongest / weakest heroes, tiles,
+                           favourites, recent matches. Exports PeriodSwitch (30 d / 90 d / all), heroVsRank(),
+                           totals(), useRankName()
+    Compare.tsx            /compare?a=&b=: two players side by side (CompareRow bars), games together,
+                           heroes both play; friend picker = Steam search + the people you play with
+    Draft.tsx              /draft: modes counter / team / build, team boxes + hero pool, picks, team roles,
+                           items vs the lineup; state in the URL (?mode=&e=&a=&me=)
     NotFound.tsx
     hero/
       HeroPage.tsx         header (bg art, portrait, SVG name, stats) + sticky tabs; sets --hero colour on <html>
@@ -290,6 +387,7 @@ src/
     base.css               reset, film-grain + glow atmosphere, typography helpers, .container/.page
     components.css         component styles (BEM-ish: .block__elem, .is-state, .block--variant)
     pages.css              page layouts + responsive rules
+    features.css           accounts, favourites, dashboard, compare, match analysis, draft
 ```
 
 ### Routes
@@ -304,13 +402,17 @@ src/
 | `/items` | Item stats |
 | `/items/:slug` | Item page. `slug` = `itemSlug(englishName)` (`mystic-burst`) in every language — `useShopItemSlugs()` loads the English upgrade names outside EN. Unknown slug → `/items` |
 | `/matches` | Match lookup by ID + my recent matches |
-| `/matches/:matchId` | Match page (SPA only, not prerendered — rewritten to `/app` like players) |
+| `/matches/:matchId` | Match page (SPA only, not prerendered — rewritten to `/app` like players). `?tab=stats|lanes|timeline|analysis` opens a tab |
+| `/draft` | Draft helper. `?mode=team|build`, `e=` enemy slugs, `a=` ally slugs, `me=` your hero (build mode). Prerendered (modes + every hero's best counters as text) |
+| `/compare` | Compare two players: `?a=` (default: me) `&b=` (SPA only) |
+| `/login` | Sign in with Steam / log in / sign up (`?mode=register`, `?next=/path`, `?steam=error`) (SPA only) |
+| `/account` | Account details, Steam link (`?steam=linked|taken|error` after the round trip), log out, delete (SPA only) |
 | `/patches` | Patch impact; `?patch=YYYY-MM-DD` picks an older patch |
 | `/leaderboard` | Ranked leaderboard; `?region=NAmerica` / `?hero=haze` |
 | `/builds` | Build browser |
 | `/players` | Player search (Steam name, profile link, SteamID64, SteamID3 or account id) |
 | `/players/:accountId` | Player profile: rank, recent form, match history, heroes, teammates; "It's me" button |
-| `/me` | Redirect to the profile marked "It's me" (or `/players`) |
+| `/me` | Personal dashboard of "me" (linked Steam account, else "It's me"); guests get a sign-in prompt (SPA only) |
 | `*` | 404 |
 
 **Every route also exists under `/uk`, `/de`, `/es`, `/ru`** (`/uk/heroes/haze/builds`). The language prefix is the React Router
@@ -320,8 +422,8 @@ language (top choice) is one we support — or with a saved choice — an Englis
 prefix; crawlers always get the URL they requested.
 
 ### SEO prerender (`scripts/prerender.ts`, runs in `npm run build`)
-Writes a static HTML file for every public route × language (≈385 routes × 5 ≈ 1925 pages: the old 226 + a page per shop item that has stats in the last 7 days (~156) +
-/patches + /leaderboard + /matches): own `<title>` /
+Writes a static HTML file for every public route × language (≈386 routes × 5 ≈ 1930 pages: the old 226 + a page per shop item that has stats in the last 7 days (~156) +
+/patches + /leaderboard + /matches + /draft): own `<title>` /
 description (same `meta.*` dictionary keys as the runtime `useDocumentMeta()`), canonical + hreflang
 (en, uk, de, es, ru, x-default), Open Graph / Twitter tags (hero card art as image), JSON-LD on the home page, and a
 static text version of the page inside `#root` (`.seo-static`: hero role, stats, abilities with T1–T3,
@@ -338,8 +440,10 @@ page AND add it to `pages()` in the prerender script.
 ```
 FilterProvider (rank, days)  ──►  StatFilters { minBadge?, days }
                                         │
-hooks/useStats.ts  ── queryKey includes filters ──►  lib/api.ts  ──►  api.deadlock-api.com
+hooks/useStats.ts  ── queryKey includes filters ──►  lib/api.ts  ──►  /api/dl (edge cache)  ──►  api.deadlock-api.com
+        │                                                   └── fallback: api.deadlock-api.com directly
         │
+lib/auth.ts · lib/favorites.ts  ──►  /api/auth/*, /api/me, /api/favorites  ──►  D1
         ▼
 derived helpers (lib/heroes.ts buildHeroRows, hooks/useHeroData.ts)  ──►  pages/components
 ```
@@ -349,7 +453,9 @@ derived helpers (lib/heroes.ts buildHeroRows, hooks/useHeroData.ts)  ──►  
   texts on screen until the new ones arrive. Heroes are always also fetched in English (slugs, search).
 * **Analytics** use `staleTime: 10 min` + `placeholderData: keepPreviousData` so changing filters
   keeps old numbers on screen while the new ones load (the FilterBar shows an "updating" spinner).
-* `filterParams()` rounds `min_unix_timestamp` **down to the hour** — keeps query keys stable and lets the API's CDN cache hit. Don't use `Date.now()` directly in query params.
+* `filterParams()` rounds `min_unix_timestamp` **down to the UTC day** (`dayStart()`) — a query stays identical for
+  a whole day, so our proxy's edge cache (and the API's CDN) keep hitting; "7 days" = 7–8 days of matches. Don't use
+  `Date.now()` directly in query params. (The prerender still rounds to the hour — it runs once a day anyway.)
 * Never call `fetch` from components. Add an endpoint to `lib/api.ts`, a hook to `hooks/`, then use it.
 
 ---
@@ -397,6 +503,9 @@ Description HTML contains `<span class="highlight">`, inline `<svg width="128">`
 | `GET /analytics/hero-synergy-stats?min_matches=100` | pairs `{hero_id1, hero_id2, wins, matches_played}` (unordered pair: check both ids) |
 | `GET /analytics/ability-order-stats?hero_id=&min_matches=200` | `[{abilities: number[15-16], wins, matches}]`; first occurrence of an id = unlock. **Without `min_matches` it's ~2 MB** — keep the param. |
 | `GET /analytics/hero-build-stats/{hero_id}?min_matches=30` | `[{hero_build_id, wins, matches, players}]` — **real win rate per build**. Min timestamp March 1 2026. |
+| `GET /analytics/hero-stats?min_average_badge=81&max_average_badge=86` | Hero stats of matches at one rank tier (dashboard "average at your rank"; analysis uses `min_average_badge=101` = Ascendant+ for the hero's game count) |
+| `GET /analytics/item-stats?hero_id=&min_average_badge=101&min_matches=20` | Item stats of one hero in top matches — `avg_buy_time_s` = "when top players buy it" (match analysis) |
+| `GET /analytics/item-stats?hero_id=&enemy_hero_ids=E&min_matches=30` | Item stats of one hero in matches where E was an enemy ("what beats E"). Several ids = ANY of them (useless for a lineup), so the draft calls it once per enemy. ⚠ `bucket=enemy_hero` would do it in one call but is ~1.7 MB / 4.5 s — don't |
 
 ### Builds & players
 | Endpoint | Notes |
@@ -404,6 +513,7 @@ Description HTML contains `<span class="highlight">`, inline `<svg width="128">`
 | `GET /builds?hero_id=&sort_by=weekly_favorites&only_latest=true&limit=&start=` | `sort_by`: `weekly_favorites` \| `favorites` \| `updated_at`; `start`/`limit` paginate; `search_name` text search; **`tag=<id>` filters server-side** by a pinned icon (build-tag id, or item/ability id), so a tag filter is correct across all pages. Pages can overlap on ties → dedupe by `hero_build_id`. |
 | `GET /builds?build_id=X&only_latest=true` | single build (used for ids coming from hero-build-stats). One request per build, cached per id. |
 | `GET /players/steam?account_ids=1,2,3` | persona names + avatars for build authors. |
+| `GET /players/hero-stats?account_ids=a,b&min_unix_timestamp=` | Per-hero career stats of several accounts in one call (rows carry `account_id`): matches_played, wins, K/D/A, `networth_per_min`, `damage_per_min`, `last_hits_per_min`, `accuracy`, `time_played`… (dashboard, compare) |
 | `GET /matches/{id}/metadata` | ~1 MB JSON, immutable → cached for the session. `assigned_lane` (1/4/6) gives lane duos; `objectives[]` = `{team (the OWNER of the structure), team_objective_id (0 = Patron), destroyed_time_s (0 = still standing)}`; `mid_boss[]` = Rejuvenator. `match_info.players[]`: team 0/1 (0 = Hidden King, 1 = Archmother), K/D/A, `net_worth`, `items[]` (`game_time_s`, `item_id`, `sold_time_s`) — ability unlocks/upgrades are in the same list, keep only `isShopItem`; `stats[]` snapshots (~every 3–5 min, last = end) with `player_damage`, `player_healing`, `net_worth`. 404 = not parsed yet |
 | `GET /leaderboard/{region}[/{hero_id}]` | Regions `Europe | NAmerica | SAmerica | Asia | Oceania`. Entries: `rank`, `account_name`, `possible_account_ids` (Valve publishes only the NAME — a common one matches hundreds of accounts), `top_hero_ids` (empty on hero boards). Short right after a ranked season starts |
 | `GET /players/rank?account_ids=` | Rank of up to 1000 accounts in one call (`badge`, `last_match.start_time`; `badge: 0` = unranked). The leaderboard uses it to resolve a shared name to the highest-ranked account — only for entries with ≤ 32 candidates and ≤ 400 ids per board, chunked 200 per request (URL length); busier names stay unlinked |
@@ -462,6 +572,20 @@ tab were built and then removed on request — don't bring them back unless aske
   - the position filter (heroes table, home grid, tier list) keeps heroes whose positions include the role
   - ratings are opinions, not match data — when a patch changes a hero, edit `data/roles.ts`
 * **Win-rate colours** (`wrTone`): ≥53% great, ≥51% good, 49–51% even, >47% bad, else awful.
+* **Draft** (`lib/draft.ts`): expected WR of candidate H = WR(H) + Σ counter effects vs each enemy + Σ synergy
+  effects with each ally, clamped to 30–70%. Effect = what the PAIR does beyond both heroes' own strength:
+  vs enemy E, `WR(H vs E) − (WR(H) − (WR(E) − 50%))`; with ally A, `WR(H with A) − (WR(H) + (WR(A) − 50%))`
+  (without this a strong enemy makes every candidate look "countered"). Each effect × n/(n+200). "Team roles" =
+  the best rating any ally has per position; the weakest one below 7 is "missing" and the pick list starts filtered
+  to it. **Items vs a lineup**: per enemy, (item WR vs E − item WR overall) minus the match-weighted average of that
+  shift over all items (the hero's own matchup), × n/(n+150), averaged over the enemies; items bought in < 3% of the
+  hero's games are ignored. Same normalisation in the prerendered "counters" list on `/draft`.
+* **Dashboard**: your WR per hero (selected period, `players/hero-stats`) minus the WR of everyone on that hero in
+  matches of your rank tier (badge tier ×10 + 1…6, last 30 days). Strong / weak = top / bottom 3 by that difference
+  among heroes with ≥ 5 games. Career numbers sum the per-hero rows; per-minute stats are weighted by time played.
+* **Match analysis**: diff = your buy second − Ascendant+ average buy second (`avg_buy_time_s`, last 30 days) for the
+  same item on the same hero; within ±60 s = on time, > 3 min late = very late. "Core items skipped" = bought by
+  ≥ 35% of top players on that hero (share of the hero's Ascendant+ games) on average before this match ended.
 
 ---
 
@@ -529,6 +653,8 @@ Rules:
   itself with the lane colour from `/assets/generic-data`. A lane card puts the lane name and the soul gap in the
   middle and the verdict (won / lost / even) above each duo, so it reads without comparing numbers.
   Both duos keep their souls next to that middle column (the right side is `row-reverse`, full width).
+  The middle column has ONE fixed width (150px) in every card and the souls diamond always faces the middle
+  (`.lane-card__souls`, mirrored on the left), so the souls of all lanes line up in two straight columns (owner's request).
   The Scoreboard tab opens with a compact `LaneStrip` of the same results, which switches to the Lanes tab on click.
 * Four abilities (Graves’ Borrowed Decree, Mina’s Rake, Silver’s Boot Kick, Solomon’s Develop Queen) have no
   `description.desc`: `abilityDescription()` falls back to `tooltip_details.info_sections` (Valve’s own localised
@@ -543,6 +669,16 @@ Rules:
 * Match page team colours are tokens `--team0-rgb` (Hidden King, amber) / `--team1-rgb` (Archmother, sapphire).
 * Section explanations go in a muted `.section-sub` paragraph under `SectionTitle`, not in its `eyebrow` (long
   uppercase eyebrows are hard to read).
+* Header account corner: guests see a small "Log in" pill (icon only < 640px); with an account or an "It's me"
+  profile it becomes the round avatar (`.me-link`) that opens `.account-menu__list`. "Draft helper" is the first
+  entry of the "three lines" menu (main tabs stay the owner's four).
+* Favourites: `FavButton` — labelled pill first in the hero header tags row, icon-only before the chevron of a build card.
+* "Sign in with Steam" is a plain `<a>` (full navigation to Steam), styled `.steam-btn` (cool steel, not brass —
+  it's Steam's button, not ours).
+* Draft: enemy team tinted with `--blood`, your team with the Archmother sapphire; the active box (where a click in the
+  hero pool goes) glows; it switches to the other team automatically when full. Pick list cards have no exit
+  animation on purpose (filter switches must be instant). Match analysis: you = cream dot, top players = brass
+  hollow diamond, the gap between them coloured by the timing tone.
 * Hero header: the card portrait has its own painted backdrop, so `.hero-head__portrait img` feathers all four edges
   (two intersected mask gradients) to melt into the background art. The name reveal animates `clip-path` with
   **negative insets** (`inset(-50% … -10%)`, same units at both ends) so the logotype's drop-shadow glow isn't clipped
@@ -597,16 +733,21 @@ Rules:
 * EN / UA / DE / ES / RU. The API supports more game languages (French, Polish, Chinese, Japanese…) — adding one is a dictionary + `LANGS` entry (+ fonts for non-Latin scripts).
 * Player data completeness depends on the Deadlock API: full live match history only for accounts that added
   their bot on Steam; otherwise only matches it already ingested. Shown as a note on the player page.
-* "It's me" is per-browser (localStorage) until stage 2 adds real Steam login.
+* "It's me" (localStorage) still works for guests; a linked Steam account overrides it.
+* Accounts have no password reset (no e-mail sending yet — owner's choice: no confirmation). A user who forgets the
+  password can still sign in with Steam if it is linked. Cloudflare Email Routing / a mail API would be needed for resets.
+* The proxy's Cache API is per data centre and doesn't work on `*.pages.dev` — only on `deadbuff.net`.
 * Hero background images are big (~2 MB webp); consider `<link rel="preload">` for the hero page or a smaller crop.
-* Possible features: position win rates per role, "recommended positions for your team" draft helper, item purchase timing chart, hero win rate trend (`hero-stats?bucket=start_time_day`), leaderboard page, patch-diff view.
+* Possible features: hero win rate trend (`hero-stats?bucket=start_time_day`), item purchase timing chart,
+  patch-diff view, password reset, "log out everywhere" (needs a sessions table or a per-user session version).
 * Position ratings are hand-maintained (see §7) — the API has no role data. They need a review after big hero reworks.
 
 ---
 
 ## 11. Before you finish a change
 
-1. `npm run build` passes (it runs `tsc -b` first — strict mode, no unused vars).
+1. `npm run build` passes (it runs `tsc -b` and `tsc -p functions` first — strict mode, no unused vars).
+   Backend changes: try them with `npm run dev:api` (or `npm run preview:full`) — curl the endpoints, log in in the browser.
 2. Open the affected pages in the dev server at desktop width **and** 375px; no horizontal scroll, no console errors.
 3. Loading (skeletons), error (`ErrorState`) and empty (`Empty`) states still render.
 4. Check the change in **every language** (globe menu in the header; at least EN, UA and DE — German words are the longest): no untranslated text, no trailing full stops, nothing overflowing.
@@ -653,36 +794,51 @@ Rules:
 - `/patches` — вплив патчу: вінрейт/пікрейт героїв за тиждень до і після кожного оновлення, хто виграв / програв
 - `/leaderboard` — рейтингова таблиця Valve по регіонах, загальна або по герою
 - `/builds` — браузер білдів (герой, сортування, пошук, фільтр за тегами, пагінація)
-- `/players`, `/players/:id` — пошук гравця і профіль (ранг, форма, матчі, герої, тімейти), кнопка «Це я»
-- `/me` — перехід на профіль, позначений «Це я»
+- `/players`, `/players/:id` — пошук гравця і профіль (ранг, форма, матчі, герої, тімейти), кнопка «Це я»,
+  «Порівняти зі мною»
+- `/draft` — **драфт-помічник**, три режими: «Контрпік» (головний: 6 ворогів → кого пікнути), «Доповнити команду»
+  (6 ворогів + 5 союзників → кого брати і якої ролі бракує), «Команда на команду» (6 на 6 + «Я» → мій матчап і
+  предмети проти цього складу + основні предмети). Драфт зберігається в URL — можна скинути другу
+- **Акаунти**: `/login` — вхід через Steam або логін/e-mail + пароль, реєстрація без підтвердження пошти;
+  `/account` — підключити / відключити Steam, вийти, видалити акаунт. В шапці — кнопка «Увійти» або аватар з меню
+- **Обране**: зірочка на сторінці героя і на кожному білді; у гостя зберігається в браузері, після входу
+  переноситься в акаунт
+- `/me` — **особистий дашборд**: вінрейт на кожному герої проти середнього на твоєму ранзі, найсильніші й
+  найслабші герої, обране, останні матчі (відкриваються на вкладці «Розбір»)
+- `/compare` — **порівняння з другом**: усі показники поруч, спільні матчі, герої, на яких грають обидва
+- `/matches/:id` → вкладка **«Розбір»**: таймінги твоїх предметів проти середнього часу покупки в гравців
+  Ascendant+ на тому ж герої, і ключові предмети, які ти пропустив
 - Глобальні фільтри: ранг і період. П'ять мов: EN (`/…`), UA (`/uk/…`), DE (`/de/…`), ES (`/es/…`), RU (`/ru/…`) —
   перемикач-глобус у шапці
-- SEO: ~1925 статичних сторінок (~385 маршрутів × 5 мов: + сторінки предметів зі статистикою, патчі, лідерборд, матчі),
-  sitemap, canonical/hreflang, OG
+- SEO: ~1930 статичних сторінок (~386 маршрутів × 5 мов: + сторінки предметів зі статистикою, патчі, лідерборд, матчі,
+  драфт), sitemap, canonical/hreflang, OG
 
-Бекенду **немає**: SPA ходить напряму в публічний [Deadlock API](https://api.deadlock-api.com/docs)
-(CORS `*`, без ключа). Бекенд запланований на етап 2 (розділ 10).
+**Бекенд** — Cloudflare Pages Functions у тому ж репо (папки `functions/` і `server/`), база — Cloudflare D1:
+- `/api/dl/*` — кешувальний проксі до [Deadlock API](https://api.deadlock-api.com/docs): відповіді лежать у кеші
+  Cloudflare і віддаються за ~10 мс замість 1–5 с, оновлюються у фоні. Якщо проксі недоступний — сайт сам іде в API напряму
+- акаунти, вхід через Steam, обране — у D1
 
 ---
 
 ## 2. Поточний стан
 
-> Оновлено 13.11.2026 (друга сесія).
+> Оновлено 13.11.2026 (третя сесія).
 
 | Що | Стан |
 |---|---|
 | Сайт | ✅ Працює: https://deadbuff.net (також https://deadbuff.pages.dev) |
-| Репозиторій | `main`, два коміти: `e253350` (перший запуск) і `09f8bef` (5 мов, предмети/матчі/патчі/лідерборд, пошук, фавікон) |
-| Незакомічені зміни | ✅ Немає — усе запушено 13.11.2026, Cloudflare Pages задеплоїв, живий сайт перевірено (1925 сторінок у sitemap) |
+| Репозиторій | `main`: `e253350` (перший запуск), `09f8bef` (5 мов, предмети/матчі/патчі/лідерборд, пошук, фавікон), `806f231` (документація в одному README) |
+| Незакомічені зміни | ⏳ Третя сесія (бекенд, акаунти, обране, дашборд, порівняння, розбір матчу, драфт, фікс ліній) — **локально, не закомічено**. Збірка проходить, перевірено в браузері |
+| Бекенд у Cloudflare | ⏳ Після пушу треба **один раз** створити D1 і секрет (розділ 3 → «Бекенд»). Без цього сайт і проксі працюють, а вхід / обране на сервері показують «Акаунти ще не ввімкнено» |
 | Google Search Console | ✅ Domain property `deadbuff.net` підтверджено (TXT у DNS). Sitemap: «Успішно», знайдено 452 сторінки |
 | Bing Webmaster Tools | ⏳ Власник робив імпорт з GSC; sitemap підтягнувся як 0 → треба вручну додати `https://deadbuff.net/sitemap.xml` |
 | Щоденне оновлення | ✅ GitHub Action `Daily rebuild` перевірено ручним запуском — успішно |
 | Індексація в Google | ⏳ Щойно почалась. Перші сторінки — дні, повністю — тижні |
 
-**Незакомічений фікс** (`scripts/prerender.ts`, `vercel.json`, Частина I): правила `_redirects` для
-`/players/*`, `/me` (і `/uk/…`) вели на `/app.html`, а Cloudflare Pages робить 308-редірект `*.html` → без
-розширення, тож переписування перетворювалось на редірект і URL профілю губився. Тепер ціль — `/app`.
-**Поки не запушено, прямі посилання / оновлення сторінки профілю гравця на живому сайті не працюють.**
+Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
+підробленої cookie, унікальність логіна без урахування регістру (і для кирилиці), проксі (повторний запит 0,8 с → 0,008 с),
+редірект на Steam. **Повний вхід через Steam не перевірено** — для цього потрібен справжній акаунт Steam (перевірити
+після деплою: «Увійти через Steam» на deadbuff.net).
 
 ---
 
@@ -710,6 +866,19 @@ Rules:
   **Web Analytics** (без cookie-банера), **DNSSEC** (увімкнути в Cloudflare → DS-запис у Namecheap),
   **Email Routing** (`contact@deadbuff.net` → пошта власника)
 
+### Бекенд (Pages Functions + D1) — що зробити власнику один раз
+1. Cloudflare → **Workers & Pages → D1 SQL Database → Create** → назва `deadbuff` → Create.
+   Таблиці створювати не треба — сайт створить їх сам при першому вході
+2. **Workers & Pages → deadbuff → Settings → Bindings → Add → D1 database**: Variable name **`DB`**,
+   база `deadbuff` → Save (для Production; за бажанням і для Preview)
+3. Там же **Settings → Variables and Secrets → Add**: Type **Secret**, name **`SESSION_SECRET`**, value — довгий
+   випадковий рядок (32+ символів, наприклад згенерований менеджером паролів). **Нікуди більше його не записувати.**
+   Якщо він засвітився — замінити (усіх розлогінить, і це нормально)
+4. **Deployments → … → Retry deployment** (або будь-який пуш) — прив'язки діють з нового деплою
+5. Перевірити: deadbuff.net → «Увійти» → зареєструватися → зірочка на герої → дашборд
+
+Опційно: `PBKDF2_ITERATIONS=100000` — лише якщо перейти на Workers Paid ($5/міс); `DEADLOCK_API_KEY` — якщо API почне обмежувати запити.
+
 ### GitHub
 - `.github/workflows/daily-rebuild.yml`: щодня о 04:17 UTC + ручний запуск → `POST` на deploy hook →
   Cloudflare перебілджує сайт → у статичних сторінках свіжі цифри (вінрейти, топ-білди, контрпіки)
@@ -719,7 +888,12 @@ Rules:
 ### Вартість
 - Cloudflare Pages / DNS / SSL / redirects — **$0** (ліміт Free: 500 білдів на місяць; щоденний ребілд ≈ 30)
 - Домен — щорічне продовження в Namecheap (єдина регулярна витрата)
-- Етап 2 (Pages Functions + D1) теж вкладається у Free: 100 тис. запитів/день, D1 5 ГБ
+- Бекенд (Pages Functions + D1) — **$0** на Free: 100 тис. викликів функцій на день, D1 5 ГБ / 5 млн читань на день.
+  Функції викликаються **лише** для `/api/*` (сторінки, картинки, JS — безкоштовна статика без лімітів).
+  Одна сторінка = ~3–10 запитів до проксі → вистачає приблизно на 10–30 тис. переглядів на день
+- Якщо ліміт вичерпано — сайт **не ламається**: SPA сам переходить на прямі запити до Deadlock API (лише повільніше),
+  а вхід / обране до півночі UTC не працюють. Тоді варто взяти **Workers Paid за $5/міс** (10 млн запитів, 30 с CPU)
+  і поставити `PBKDF2_ITERATIONS=100000`
 
 ---
 
@@ -730,7 +904,10 @@ Rules:
 - Prerender тягне дані з API під час білду і пише в `dist/`: HTML на кожен маршрут × мову, `sitemap.xml`,
   `robots.txt`, `app.html` (чиста оболонка SPA), `_redirects`
 - Cloudflare Pages: `/heroes/haze` → `heroes/haze.html` (pretty URLs), `*.html` → 308 на URL без розширення
-- `_redirects`: `/players/*`, `/me` (+ `/uk/…`) → `/app` 200 (rewrite). **Ціль саме `/app`, не `/app.html`**
+- `_redirects`: `/players/*`, `/matches/*`, `/me`, `/login`, `/account`, `/compare` (+ `/uk/…` тощо) → `/app` 200
+  (rewrite). **Ціль саме `/app`, не `/app.html`**
+- `_routes.json`: функції запускаються лише для `/api/*`
+- Локально з бекендом: `npm run dev` + `npm run dev:api` (або `npm run preview:full` для готової збірки)
 - Невідомі шляхи → `index.html` (SPA-режим Pages). **Не додавати верхньорівневий `404.html`** — він вимкне SPA-режим
 - `vercel.json` дублює ту ж логіку на випадок переїзду на Vercel
 - Локальна перевірка продакшн-збірки: `npm run preview` (`scripts/preview.ts` імітує Pages на :4173)
@@ -843,6 +1020,20 @@ Rules:
     - у таблиці матчу рядки згруповані по лініях (кольорова дужка зліва, назва лінії та виграли/програли)
     - пошук у шапці тепер знаходить і розділи: «deadlock statistics», «my account», «мої матчі», «тір-ліст»,
       а також «haze build» / «haze counters» → одразу потрібна вкладка героя; слово «deadlock» ігнорується
+21. **Третя сесія 13.11 (локально, не закомічено).** Запит: «реалізувати план, можливо з бекендом, оптимізувати
+    запити, безкоштовно (або до $5/міс), просто і швидко» + список:
+    - **лінії в матчі**: душі зліва і справа стоять рівно одна під одною — середня колонка однакової ширини в усіх
+      картках, ромбик душ завжди біля середини (дзеркально)
+    - **бекенд** на Cloudflare Pages Functions + D1 (рішення: лишаємось на Cloudflare, $0; $5 — лише якщо впремось у ліміти)
+    - **швидкість**: кешувальний проксі `/api/dl` з оновленням у фоні + вікно статистики округлене до дня (запити
+      однакові цілу добу → постійні попадання в кеш)
+    - **акаунти**: вхід через Steam або логін + e-mail + пароль (без підтвердження пошти, як просив власник), Steam можна
+      підключити пізніше або зайти одразу через нього; видалення акаунта
+    - **обране** (герої й білди), **особистий дашборд**, **порівняння з другом**, **розбір матчу** (таймінги проти
+      Ascendant+), **драфт-помічник** з трьома режимами (контрпік — головний)
+    - драфт-помічник у меню «три риски» першим пунктом (4 головні таби не чіпали)
+    - модель драфту: поправки рахують лише взаємодію пари героїв, без загальної сили ворога — інакше проти сильних
+      героїв «червоними» виходили всі
 
 ---
 
@@ -850,7 +1041,8 @@ Rules:
 
 - Спілкування — **українською**. Коротко, по ділу, з конкретними кроками («куди натиснути»)
 - **Комітити й пушити тільки коли власник прямо скаже** («пуш», «закомить»). Готові зміни — назвати і спитати
-- Секрети (deploy hook, ключі API, сесійний секрет) — тільки в GitHub Secrets / Cloudflare env
+- Секрети (deploy hook, ключі API, `SESSION_SECRET`) — тільки в GitHub Secrets / Cloudflare env
+- Бекенд має лишатись **безкоштовним** (або до $5/міс) і простим: Cloudflare Pages Functions + D1, без окремих серверів
 - **UI-тексти без крапки в кінці.** Усі рядки через `useT()`, обидві мови
 - Дизайн: тема «occult noir / art-deco», тільки токени з `tokens.css`, ніякого «generic AI dashboard»
 - **Оцінки позицій з `o(…)` — від власника, ніколи не «виправляти» назад.** Нової «універсальної» позиції не вигадувати:
@@ -899,6 +1091,12 @@ nurse-harrow 10/3/5/0, baba 4/6/8/5.
 
 ## 9. Відкриті питання до власника
 
+0. **Третя сесія чекає на «пуш»**. Після пушу — налаштувати D1 + `SESSION_SECRET` (розділ 3 → «Бекенд») і
+   перевірити вхід через Steam на живому сайті
+0a. **Відновлення пароля** немає (немає відправки пошти — власник не хотів підтвердження e-mail). Якщо потрібне —
+   знадобиться поштовий сервіс (наприклад, Resend, безкоштовно до 3 тис. листів/міс) або Cloudflare Email Workers
+0b. Переклади нових текстів DE / ES / RU — підібрані вручну, варто глянути носіям: DE «Draft-Helfer», «Jäger»;
+   ES «Asistente de draft», «Panel»; RU «Драфт-помощник»
 1. ✅ Запушено. **Що зробити власнику в Search Console:** «Перевірка URL» → `https://deadbuff.net/` → «Запит на
    індексування» (щоб швидше підхопилась іконка сайту й нові сторінки). Іконка в Google зʼявляється за кілька днів.
    Bing — додати sitemap вручну
@@ -915,7 +1113,9 @@ nurse-harrow 10/3/5/0, baba 4/6/8/5.
 
 ## 10. Етап 2: вхід через Steam — план реалізації
 
-Ще не почато. Код уже підготовлений: `lib/steam.ts` (SteamID64 ⇄ account_id), `lib/me.ts` (заглушка «Це я»).
+✅ **Реалізовано в третій сесії** (Частина I, §3 «Backend»). Відмінності від плану нижче: є ще вхід за логіном і
+паролем (власник попросив), база прив'язана до користувача (`users.id`), а не до Steam-акаунта, тож Steam можна
+підключити пізніше; D1-схема створюється автоматично; додано кешувальний проксі `/api/dl`. План лишається для історії.
 
 ### Де
 **Cloudflare Pages Functions** — папка `functions/` у цьому ж репо, деплоїться разом із сайтом на той самий
@@ -1003,13 +1203,14 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
 - **Графік вінрейту героя** по днях / патчах (`hero-stats?bucket=start_time_day`)
 
 ### P3 — для утримання
-- **Вхід через Steam + особистий дашборд** (розділ 10)
-- Улюблені герої / білди
-- Порівняння двох гравців
+- ~~Вхід через Steam + особистий дашборд~~ — зроблено (третя сесія)
+- ~~Улюблені герої / білди~~ — зроблено
+- ~~Порівняння двох гравців~~ — зроблено
+- Далі: відновлення пароля, «вийти на всіх пристроях», сповіщення про нові матчі
 
 ### Далі
 - ~~Лідерборд по регіонах~~ — зроблено (локально)
-- **Драфт-помічник:** обираєш ворожих героїв → поради, кого брати (контрпіки + синергія вже є)
+- ~~Драфт-помічник~~ — зроблено (три режими). Далі можна: бани, лайни в драфті, «чий пік наступний»
 - Сторінки «Haze vs Infernus» — тільки популярні пари (щоб не плодити порожніх сторінок)
 - Win rate предметів за часом покупки (прибирає перекіс на користь пізніх предметів)
 - Ще мови інтерфейсу (французька, польська, португальська…) — API віддає ігрову локалізацію, додати = словник +
@@ -1044,3 +1245,6 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   у лідерборді, таблиця матчу без горизонтального скролу, матриця вбивств (п. 17); підсвітка себе в матчі,
   нові картки ліній, опис ульти Ґрейвз з API (п. 18); фавікон для Google, групування по лініях у таблиці матчу,
   пошук по розділах (пп. 19–20)
+- **13.11.2026 (третя сесія)** — бекенд (Pages Functions + D1), кешувальний проксі, акаунти (Steam + логін), обране,
+  дашборд, порівняння, розбір матчу, драфт-помічник, рівні душі в лініях (розділ 6, п. 21); оновлено розділи 1–4, 7, 9–11
+  і Частину I (§1–11)

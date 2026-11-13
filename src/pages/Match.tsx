@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useMemo } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { HeroAvatar } from '../components/HeroChip';
 import { ItemIcon } from '../components/ItemIcon';
 import { Empty, ErrorState, Page, Panel, SectionTitle, Segmented, Skeleton } from '../components/UI';
@@ -10,24 +10,17 @@ import { useSteamProfiles } from '../hooks/useStats';
 import { useT, type MsgKey } from '../i18n';
 import { ApiError } from '../lib/api';
 import { fmtCompact, fmtDate, fmtInt, fmtPct, fmtTime } from '../lib/format';
-import { isShopItem } from '../lib/items';
-import { finalStat, killMatrix, laneResults, LANE_END_S, objectiveEvents, soulLead, statAt, teamTotals, type LaneResult } from '../lib/match';
+import { finalStat, killMatrix, laneResults, LANE_END_S, objectiveEvents, purchases, soulLead, statAt, teamTotals, type LaneResult } from '../lib/match';
 import { useMe } from '../lib/me';
 import { useDocumentMeta } from '../lib/seo';
-import type { Item, MatchInfo, MatchPlayer, SteamProfile } from '../lib/types';
+import { AnalysisTab } from './MatchAnalysis';
+import type { MatchInfo, MatchPlayer, SteamProfile } from '../lib/types';
 
 const TEAM_KEYS: MsgKey[] = ['match.team0', 'match.team1'];
-const TABS = ['scoreboard', 'stats', 'lanes', 'timeline'] as const;
+const TABS = ['scoreboard', 'stats', 'lanes', 'timeline', 'analysis'] as const;
 type Tab = (typeof TABS)[number];
 
-/** Shop purchases in buy order (ability unlocks / upgrades are filtered out). */
-const purchases = (p: MatchPlayer, byId: Map<number, Item>) =>
-  (p.items ?? [])
-    .map((e) => ({ e, item: byId.get(e.item_id) }))
-    .filter((x): x is { e: MatchPlayer['items'][number]; item: Item } => !!x.item && isShopItem(x.item))
-    .sort((a, b) => a.e.game_time_s - b.e.game_time_s);
-
-const nameOf = (p: MatchPlayer, profiles: Map<number, SteamProfile>, fallback?: string) =>
+export const nameOf = (p: MatchPlayer, profiles: Map<number, SteamProfile>, fallback?: string) =>
   profiles.get(p.account_id)?.personaname ?? fallback ?? (p.account_id ? `#${p.account_id}` : '');
 
 function PlayerName({ p, profile }: { p: MatchPlayer; profile?: SteamProfile }) {
@@ -172,16 +165,21 @@ function TeamTable({ team, info, profiles }: { team: number; info: MatchInfo; pr
 
 /* -------------------------------- stats -------------------------------- */
 
-/** One metric for both teams, as a single bar split where the two totals meet. */
-function CompareRow({ label, a, b, format }: { label: string; a: number; b: number; format: (n: number) => string }) {
+/**
+ * One metric for both sides (two teams here, two players on /compare), as a single bar split where the
+ * two totals meet. `lowerBetter` (deaths…) highlights the smaller number instead.
+ */
+export function CompareRow({ label, a, b, format, lowerBetter }: { label: string; a: number; b: number; format: (n: number) => string; lowerBetter?: boolean }) {
   const total = a + b || 1;
   const share = (a / total) * 100;
+  const aLeads = lowerBetter ? a <= b : a >= b;
+  const bLeads = lowerBetter ? b <= a : b >= a;
   return (
     <div className="compare">
       <div className="compare__nums num">
-        <b className={a >= b ? 'is-lead' : ''}>{format(a)}</b>
+        <b className={aLeads ? 'is-lead' : ''}>{format(a)}</b>
         <span className="compare__label">{label}</span>
-        <b className={b >= a ? 'is-lead' : ''}>{format(b)}</b>
+        <b className={bLeads ? 'is-lead' : ''}>{format(b)}</b>
       </div>
       <div className="compare__bar" aria-hidden>
         <motion.span
@@ -360,7 +358,7 @@ function LaneCard({ res, profiles }: { res: LaneResult; profiles: Map<number, St
               <span className="lane-card__name" title={nameOf(p, profiles, hero?.name)}>
                 {nameOf(p, profiles, hero?.name)}
               </span>
-              <span className="num souls">{fmtCompact(statAt(p, LANE_END_S)?.net_worth ?? 0)}</span>
+              <span className="num souls lane-card__souls">{fmtCompact(statAt(p, LANE_END_S)?.net_worth ?? 0)}</span>
             </div>
           );
         })}
@@ -551,7 +549,10 @@ export function MatchPage() {
   const { matchId = '' } = useParams();
   const id = Number(matchId);
   const { t, ago } = useT();
-  const [tab, setTab] = useState<Tab>('scoreboard');
+  const [params, setParams] = useSearchParams();
+  // ?tab=analysis opens a tab directly (the dashboard links its recent matches to the analysis)
+  const tab: Tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'scoreboard';
+  const setTab = (next: Tab) => setParams(next === 'scoreboard' ? {} : { tab: next }, { replace: true });
   const q = useMatch(id);
   const ranks = useRanks();
   const info = q.data?.match_info;
@@ -634,6 +635,7 @@ export function MatchPage() {
                 )}
                 {tab === 'stats' && <StatsTab info={info} profiles={profiles} />}
                 {tab === 'lanes' && <LanesTab info={info} profiles={profiles} />}
+                {tab === 'analysis' && <AnalysisTab info={info} profiles={profiles} />}
                 {tab === 'timeline' && (
                   <>
                     <SoulLead info={info} />

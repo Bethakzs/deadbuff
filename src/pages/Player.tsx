@@ -10,6 +10,7 @@ import { useSteamProfiles } from '../hooks/useStats';
 import { useT } from '../i18n';
 import { fmtCompact, fmtNum, fmtTime } from '../lib/format';
 import { heroRgb } from '../lib/heroes';
+import { useAuth } from '../lib/auth';
 import { setMe, useMe } from '../lib/me';
 import { useDocumentMeta } from '../lib/seo';
 import type { PlayerMatch } from '../lib/types';
@@ -75,7 +76,7 @@ function RecentForm({ matches }: { matches: PlayerMatch[] }) {
 }
 
 /** Match history; every row opens the match page. */
-export function MatchList({ matches, title }: { matches: PlayerMatch[]; title?: string }) {
+export function MatchList({ matches, title, analysis }: { matches: PlayerMatch[]; title?: string; /** rows open the match on its Analysis tab */ analysis?: boolean }) {
   const { t, ago } = useT();
   const heroes = useHeroes();
   const [visible, setVisible] = useState(STEP);
@@ -87,7 +88,7 @@ export function MatchList({ matches, title }: { matches: PlayerMatch[]; title?: 
           const hero = heroes.byId.get(m.hero_id);
           return (
             <motion.li key={m.match_id} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min((i % STEP) * 0.02, 0.3) }}>
-              <Link to={`/matches/${m.match_id}`} className={`match-row ${won(m) ? 'is-win' : 'is-loss'}`} title={t('match.open')}>
+              <Link to={`/matches/${m.match_id}${analysis ? '?tab=analysis' : ''}`} className={`match-row ${won(m) ? 'is-win' : 'is-loss'}`} title={t('match.open')}>
                 <span className="match-row__result">{won(m) ? t('player.win') : t('player.loss')}</span>
                 {hero ? (
                   <span className="match-row__hero" style={{ ['--hero' as string]: heroRgb(hero) }}>
@@ -203,6 +204,7 @@ export function PlayerPage() {
   const accountId = Number(raw);
   const valid = Number.isInteger(accountId) && accountId > 0 && accountId < 2 ** 32;
   const me = useMe();
+  const { user } = useAuth();
   const profile = useSteamProfiles(valid ? [accountId] : []).get(accountId);
   const rank = usePlayerRank(accountId);
   const history = useMatchHistory(accountId);
@@ -245,7 +247,8 @@ export function PlayerPage() {
               ) : (
                 <span className="chip chip--ghost">{t('player.unranked')}</span>
               )}
-              {me === accountId ? (
+              {/* with a linked Steam account "me" comes from the login — no manual marking */}
+              {user?.accountId ? null : me === accountId ? (
                 <button className="btn btn--ghost" onClick={() => setMe(null)}>
                   {t('player.notMe')}
                 </button>
@@ -253,6 +256,11 @@ export function PlayerPage() {
                 <button className="btn btn--brass" onClick={() => setMe(accountId)}>
                   {t('player.itsMe')}
                 </button>
+              )}
+              {me && me !== accountId && (
+                <Link className="btn btn--ghost" to={`/compare?a=${me}&b=${accountId}`}>
+                  {t('cmp.withMe')}
+                </Link>
               )}
               {profile?.profileurl && (
                 <a className="link-more" href={profile.profileurl} target="_blank" rel="noreferrer">

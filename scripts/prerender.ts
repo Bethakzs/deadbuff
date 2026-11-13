@@ -202,13 +202,33 @@ function heroText(d: Data, hero: Hero, lang: Lang) {
 }
 
 function navBlock(lang: Lang) {
-  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
+  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/draft', t(lang, 'nav.draft'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
 }
 
 function heroLinks(d: Data, lang: Lang, rows = d.rows) {
   return `<ul>${rows
     .map((r) => `<li>${link(lang, `/heroes/${r.hero.slug}`, heroText(d, r.hero, lang).name)} — ${esc(t(lang, 'stat.winRate'))} ${pct(lang, r.winRate)}, ${esc(t(lang, 'stat.pickRate'))} ${pct(lang, r.pickRate)}</li>`)
     .join('')}</ul>`;
+}
+
+/** "Haze — Abrams +2.1%, Lash +1.8%…": the heroes that beat each hero most (vs their own usual win rate). */
+function counterLines(d: Data, lang: Lang) {
+  const base = new Map(d.rows.map((r) => [r.hero.id, r.winRate]));
+  const byId = new Map(d.heroes.map((h) => [h.id, h]));
+  return d.heroes
+    .map((enemy) => {
+      const best = d.counters
+        .filter((c) => c.enemy_hero_id === enemy.id && c.matches_played >= 300 && base.has(c.hero_id) && byId.has(c.hero_id))
+        // same "beyond the heroes' own strength" effect as the draft helper (lib/draft.ts)
+        .map((c) => ({ hero: byId.get(c.hero_id)!, delta: c.wins / c.matches_played - base.get(c.hero_id)! + ((base.get(enemy.id) ?? 0.5) - 0.5) }))
+        .filter((x) => x.delta > 0)
+        .sort((a, b) => b.delta - a.delta)
+        .slice(0, 4);
+      if (!best.length) return '';
+      const list = best.map((x) => `${esc(heroText(d, x.hero, lang).name)} +${pct(lang, x.delta)}`).join(', ');
+      return `<li>${link(lang, `/heroes/${enemy.slug}/matchups`, heroText(d, enemy, lang).name)} — ${list}</li>`;
+    })
+    .join('');
 }
 
 /** Plain-text description of a shop item (tooltip blurbs, else the short description). */
@@ -328,6 +348,19 @@ function pages(d: Data): PageDef[] {
       description: (l) => t(l, 'meta.desc.matches'),
       image: fallbackImage,
       body: (l) => `<h1>${esc(t(l, 'matches.title'))}</h1><p>${esc(t(l, 'matches.sub'))}</p>${navBlock(l)}`,
+    },
+    {
+      // draft helper: the three modes + every hero's best counter-picks as text ("deadlock haze counter")
+      path: '/draft',
+      title: (l) => t(l, 'meta.draft'),
+      description: (l) => t(l, 'meta.desc.draft'),
+      image: fallbackImage,
+      body: (l) => {
+        const modes = (['counter', 'team', 'build'] as const)
+          .map((m) => `<li><b>${esc(t(l, `draft.mode.${m}` as MsgKey))}</b> — ${esc(t(l, `draft.sub.${m}` as MsgKey))}</li>`)
+          .join('');
+        return `<h1>${esc(t(l, 'draft.title'))}</h1><p>${esc(t(l, 'meta.desc.draft'))}</p><ul>${modes}</ul>${navBlock(l)}<h2>${esc(t(l, 'hm.counters'))}</h2><ul>${counterLines(d, l)}</ul>`;
+      },
     },
   ];
 
@@ -551,8 +584,13 @@ async function main() {
   // Rules for every language prefix ("", "/uk", "/de", …).
   await write(
     '_redirects',
-    [...LANGS.flatMap((l) => [`${l.prefix}/players/*  /app  200`, `${l.prefix}/matches/*  /app  200`, `${l.prefix}/me  /app  200`]), ''].join('\n'),
+    [
+      ...LANGS.flatMap((l) => ['/players/*', '/matches/*', '/me', '/login', '/account', '/compare'].map((p) => `${l.prefix}${p}  /app  200`)),
+      '',
+    ].join('\n'),
   );
+  // Pages Functions run ONLY for /api/* (own backend + API proxy) — every other request stays a free static file.
+  await write('_routes.json', JSON.stringify({ version: 1, include: ['/api/*'], exclude: [] }));
 
   let data: Data;
   try {
@@ -579,9 +617,9 @@ async function main() {
       'sitemap.xml',
       `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls.join('\n')}\n</urlset>\n`,
     );
-    await write('robots.txt', `User-agent: *\nAllow: /\n\nSitemap: ${SITE_URL}/sitemap.xml\n`);
+    await write('robots.txt', `User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: ${SITE_URL}/sitemap.xml\n`);
   } else {
-    await write('robots.txt', 'User-agent: *\nAllow: /\n');
+    await write('robots.txt', 'User-agent: *\nAllow: /\nDisallow: /api/\n');
     console.warn('[prerender] SITE_URL is not set — skipped canonical/hreflang links and sitemap.xml (set it in the hosting build settings)');
   }
   console.log(`[prerender] ${list.length * LANGS.length} pages written (${list.length} routes × ${LANGS.length} languages)`);

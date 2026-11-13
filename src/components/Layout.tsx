@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useSteamProfiles } from '../hooks/useStats';
 import { LANGS, useT, type Lang, type MsgKey } from '../i18n';
+import { useAuth, useAuthActions } from '../lib/auth';
+import { FavoritesSync } from '../lib/favorites';
 import { useMe } from '../lib/me';
 import { SiteSearch } from './SiteSearch';
 
@@ -18,6 +20,7 @@ const NAV: NavItem[] = [
 
 /** Secondary sections behind the "three lines" menu at the end of the nav (owner's request). */
 const MORE: NavItem[] = [
+  { to: '/draft', key: 'nav.draft' },
   { to: '/patches', key: 'nav.patches' },
   { to: '/players', key: 'nav.players' },
   { to: '/matches', key: 'nav.matches' },
@@ -210,16 +213,102 @@ function BackButton() {
   );
 }
 
-/** Avatar shortcut to the profile marked with "It's me" (shown only once one is set). */
-function MeLink() {
+/**
+ * Account corner of the header. Guests without a profile see a "Log in" button; anyone with an
+ * account or an "It's me" profile gets an avatar (Steam avatar or the name's first letter) opening a
+ * menu: dashboard, my profile, compare, account / log in, log out.
+ */
+function AccountMenu() {
   const { t } = useT();
+  const { user } = useAuth();
+  const { logout } = useAuthActions();
   const me = useMe();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const profile = useSteamProfiles(me ? [me] : []).get(me ?? -1);
-  if (!me) return null;
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+
+  useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !root.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+
+  if (!user && !me) {
+    return (
+      <Link to="/login" className="login-btn" title={t('auth.login')}>
+        <svg viewBox="0 0 20 20" aria-hidden>
+          <circle cx="10" cy="7" r="3.4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M3.5 17c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+        <span>{t('auth.login')}</span>
+      </Link>
+    );
+  }
+
+  const name = user?.username ?? profile?.personaname ?? `#${me}`;
+  const items: { to: string; key: MsgKey }[] = [
+    { to: '/me', key: 'nav.dashboard' },
+    ...(me ? [{ to: `/players/${me}`, key: 'nav.me' as MsgKey }] : []),
+    { to: '/compare', key: 'nav.compare' },
+    { to: user ? '/account' : '/login', key: user ? 'nav.account' : 'auth.login' },
+  ];
+
   return (
-    <Link to="/me" className="me-link" title={t('nav.me')} aria-label={t('nav.me')}>
-      {profile?.avatar ? <img src={profile.avatar} alt="" /> : <span>{(profile?.personaname ?? '?').slice(0, 1)}</span>}
-    </Link>
+    <div className="account-menu" ref={root}>
+      <button
+        className={`me-link ${open ? 'is-open' : ''}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${t('nav.accountMenu')}: ${name}`}
+        title={name}
+      >
+        {profile?.avatar ? <img src={profile.avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="account-menu__list"
+            role="menu"
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98, transition: { duration: 0.1 } }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="account-menu__who">
+              <span className="eyebrow">{user ? t('auth.signedInAs') : t('player.isMe')}</span>
+              <b>{name}</b>
+            </div>
+            {items.map((m) => (
+              <Link key={m.to} role="menuitem" to={m.to} className={inSection(pathname, m.to) ? 'is-active' : ''}>
+                {t(m.key)}
+              </Link>
+            ))}
+            {user && (
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  logout().catch(() => undefined);
+                  navigate('/');
+                }}
+              >
+                {t('auth.logout')}
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -258,7 +347,7 @@ function Header() {
         </nav>
         <MoreMenu />
         <div className="site-header__search">{loc.pathname !== '/' && <SiteSearch />}</div>
-        <MeLink />
+        <AccountMenu />
         <LangSwitch />
         <button className="burger" aria-label={t('nav.menu')} aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
           <span />
@@ -306,6 +395,7 @@ function Footer() {
 export function Layout({ children }: { children: ReactNode }) {
   return (
     <>
+      <FavoritesSync />
       <Header />
       {children}
       <Footer />

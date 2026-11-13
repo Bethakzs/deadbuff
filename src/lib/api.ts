@@ -32,6 +32,14 @@ import type {
 
 export const API_BASE = 'https://api.deadlock-api.com/v1';
 
+/**
+ * Our own caching proxy (Cloudflare Pages Function `functions/api/dl`): same API, answered from the
+ * edge cache with stale-while-revalidate — a cold analytics query takes the API 1–5 s, a cached one ~10 ms.
+ * Used in production builds; in `npm run dev` only with VITE_API_PROXY=1 (needs `npm run dev:api`).
+ */
+const PROXY_BASE = '/api/dl';
+let viaProxy = import.meta.env.PROD || import.meta.env.VITE_API_PROXY === '1';
+
 type Params = Record<string, string | number | boolean | null | undefined>;
 
 export class ApiError extends Error {
@@ -40,6 +48,8 @@ export class ApiError extends Error {
   }
 }
 
+const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError';
+
 async function get<T>(path: string, params: Params = {}, signal?: AbortSignal): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -47,8 +57,25 @@ async function get<T>(path: string, params: Params = {}, signal?: AbortSignal): 
     qs.set(k, String(v));
   }
   const query = qs.toString();
-  const url = `${API_BASE}${path}${query ? `?${query}` : ''}`;
-  const res = await fetch(url, { signal });
+  const suffix = `${path}${query ? `?${query}` : ''}`;
+
+  if (viaProxy) {
+    try {
+      const res = await fetch(`${PROXY_BASE}${suffix}`, { signal });
+      // the proxy marks everything that came from the API (errors included)
+      if (res.headers.get('x-proxy-upstream')) {
+        if (!res.ok) throw new ApiError(res.status, `Deadlock API ${res.status} on ${path}`);
+        return (await res.json()) as T;
+      }
+      // anything else (Function quota exceeded, an HTML fallback page…) → talk to the API directly from now on
+      viaProxy = false;
+    } catch (e) {
+      if (e instanceof ApiError || isAbort(e)) throw e;
+      viaProxy = false;
+    }
+  }
+
+  const res = await fetch(`${API_BASE}${suffix}`, { signal });
   if (!res.ok) {
     throw new ApiError(res.status, `Deadlock API ${res.status} on ${path}`);
   }
@@ -65,12 +92,16 @@ export interface StatFilters {
   days: number;
 }
 
-/** Rounded to the hour so query keys (and the CDN cache) stay stable. */
+/**
+ * Window start rounded down to the UTC day, so a query (and its cache entry in our proxy and the
+ * API's CDN) stays the same for a whole day instead of changing every hour. "7 days" therefore
+ * means 7–8 days of matches — no visible difference in the numbers, many more cache hits.
+ */
+export const dayStart = (daysAgo: number) => Math.floor(Date.now() / 1000 / 86400) * 86400 - daysAgo * 86400;
+
 export function filterParams(f: StatFilters): Params {
-  const hour = 3600;
-  const now = Math.floor(Date.now() / 1000 / hour) * hour;
   return {
-    min_unix_timestamp: now - f.days * 86400,
+    min_unix_timestamp: dayStart(f.days),
     min_average_badge: f.minBadge,
   };
 }
@@ -197,6 +228,25 @@ export const fetchMatchHistory = (accountId: number, signal?: AbortSignal) =>
 
 export const fetchPlayerHeroStats = (accountId: number, signal?: AbortSignal) =>
   get<PlayerHeroStat[]>('/players/hero-stats', { account_ids: accountId }, signal);
+
+/** Per-hero stats of several accounts at once (rows carry account_id), optionally only since `days` ago. */
+export const fetchPlayersHeroStats = (accountIds: number[], days: number | undefined, signal?: AbortSignal) =>
+  get<PlayerHeroStat[]>('/players/hero-stats', { account_ids: accountIds.join(','), min_unix_timestamp: days ? dayStart(days) : undefined }, signal);
+
+/**
+ * Hero stats of matches whose average rank lies in [minBadge, maxBadge] — "the average at your rank".
+ * The API needs `bucket` off here; rows look exactly like the overall hero stats.
+ */
+export const fetchHeroStatsAtRank = (minBadge: number | undefined, maxBadge: number | undefined, days: number, signal?: AbortSignal) =>
+  get<HeroStat[]>('/analytics/hero-stats', { min_unix_timestamp: dayStart(days), min_average_badge: minBadge, max_average_badge: maxBadge }, signal);
+
+/** Item stats of one hero in high-rank matches (badge ≥ minBadge) — "what top players buy, and when". */
+export const fetchTopItemStats = (heroId: number, minBadge: number, days: number, signal?: AbortSignal) =>
+  get<ItemStat[]>('/analytics/item-stats', { hero_id: heroId, min_average_badge: minBadge, min_unix_timestamp: dayStart(days), min_matches: 20 }, signal);
+
+/** Item stats of one hero in matches where `enemyId` was on the other team ("what beats hero X"). */
+export const fetchItemStatsVsEnemy = (f: StatFilters, heroId: number, enemyId: number, signal?: AbortSignal) =>
+  get<ItemStat[]>('/analytics/item-stats', { ...filterParams(f), hero_id: heroId, enemy_hero_ids: enemyId, min_matches: 30 }, signal);
 
 export const fetchPlayerRank = (accountId: number, signal?: AbortSignal) =>
   get<PlayerRank>(`/players/${accountId}/rank`, {}, signal);

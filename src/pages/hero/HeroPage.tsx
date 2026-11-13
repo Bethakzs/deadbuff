@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useMemo } from 'react';
 import { Link, NavLink, Navigate, useParams } from 'react-router-dom';
+import { FavButton } from '../../components/FavButton';
 import { FilterBar } from '../../components/FilterBar';
 import { PositionChips } from '../../components/Position';
 import { CountUp, ErrorState, Page, Skeleton, TierBadge } from '../../components/UI';
@@ -90,6 +91,7 @@ function HeroHeader({ hero }: { hero: Hero }) {
           )}
 
           <motion.div className="hero-head__tags" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.45 }}>
+            <FavButton kind="hero" id={hero.id} label />
             <span className="chip chip--hero">{role}</span>
             <PositionChips hero={hero} colored />
             {hero.complexity ? (

@@ -2,18 +2,23 @@ import { AnimatePresence } from 'framer-motion';
 import { useEffect, useRef } from 'react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { AccountPage } from './pages/Account';
 import { BuildsPage } from './pages/Builds';
+import { ComparePage } from './pages/Compare';
+import { DashboardPage } from './pages/Dashboard';
+import { DraftPage } from './pages/Draft';
 import { HeroPage } from './pages/hero/HeroPage';
 import { HeroesPage } from './pages/Heroes';
 import { HomePage } from './pages/Home';
 import { ItemPage } from './pages/Item';
 import { ItemsPage } from './pages/Items';
 import { LeaderboardPage } from './pages/Leaderboard';
+import { LoginPage } from './pages/Login';
 import { MatchPage } from './pages/Match';
 import { MatchesPage } from './pages/Matches';
 import { NotFound } from './pages/NotFound';
 import { PatchesPage } from './pages/Patches';
-import { MeRedirect, PlayerPage } from './pages/Player';
+import { PlayerPage } from './pages/Player';
 import { PlayersPage } from './pages/Players';
 import { TierListPage } from './pages/TierList';
 
@@ -48,7 +53,11 @@ export default function App() {
           <Route path="/builds" element={<BuildsPage />} />
           <Route path="/players" element={<PlayersPage />} />
           <Route path="/players/:accountId" element={<PlayerPage />} />
-          <Route path="/me" element={<MeRedirect />} />
+          <Route path="/me" element={<DashboardPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/account" element={<AccountPage />} />
+          <Route path="/compare" element={<ComparePage />} />
+          <Route path="/draft" element={<DraftPage />} />
           <Route path="/matches" element={<MatchesPage />} />
           <Route path="/matches/:matchId" element={<MatchPage />} />
           <Route path="/patches" element={<PatchesPage />} />

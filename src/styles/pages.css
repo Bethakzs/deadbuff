@@ -2296,9 +2296,11 @@ a.lb-name:hover {
   text-transform: uppercase;
   margin-top: -4px;
 }
+/* the middle column has one fixed width in every card (lane names differ in length), so the souls of
+   all three lanes line up in two columns either side of it */
 .lane-card__sides {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -2338,6 +2340,20 @@ a.lb-name:hover {
   white-space: nowrap;
   font-size: 13px;
   font-weight: 600;
+}
+/* souls mirror around the middle column: the diamond always faces the middle, so diamonds form a straight
+   column on each side and the numbers line up against them (left side right-aligned, right side left-aligned) */
+.lane-card__souls {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.lane-card__side--0 .lane-card__souls {
+  flex-direction: row-reverse;
+}
+.lane-card__side--0 .lane-card__souls::before {
+  margin: 0 0 0 5px;
 }
 .lane-card__diff {
   font-size: 20px;
@@ -2588,9 +2604,11 @@ a.lb-name:hover {
 .kill-row.is-me {
   border-color: rgb(217 169 91 / 0.45);
 }
+/* the highlight grows outwards by its padding — the extra width keeps its souls in line with the other rows */
 .lane-card__player.is-me {
   padding: 2px 6px;
   margin: -2px -6px;
+  width: calc(100% + 12px);
 }
 
 @media (max-width: 860px) {
@@ -2614,6 +2632,13 @@ a.lb-name:hover {
   }
   .lane-card__side--1 {
     grid-area: c;
+  }
+  /* both duos read left to right here: both columns end with the diamond on one line */
+  .lane-card__side--1 .lane-card__souls {
+    flex-direction: row-reverse;
+  }
+  .lane-card__side--1 .lane-card__souls::before {
+    margin: 0 0 0 5px;
   }
 }
 

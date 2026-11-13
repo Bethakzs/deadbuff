@@ -322,6 +322,12 @@ export interface PlayerHeroStat {
   time_played: number;
   networth_per_min?: number;
   damage_per_min?: number;
+  damage_taken_per_min?: number;
+  last_hits_per_min?: number;
+  obj_damage_per_min?: number;
+  /** 0–1 */
+  accuracy?: number;
+  ending_level?: number;
 }
 
 /** /players/{account_id}/rank — badge = tier*10 + subrank. */

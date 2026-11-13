@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { fetchMatch, fetchMatchHistory, fetchMateStats, fetchPlayerHeroStats, fetchPlayerRank, fetchPlayerRanks, fetchSteamSearch } from '../lib/api';
+import { fetchMatch, fetchMatchHistory, fetchMateStats, fetchPlayerHeroStats, fetchPlayerRank, fetchPlayerRanks, fetchPlayersHeroStats, fetchSteamSearch } from '../lib/api';
 import type { PlayerRankRow } from '../lib/types';
 
 /* Player data changes after every match: short cache, no keepPreviousData (different players). */
@@ -58,4 +58,15 @@ export function usePlayerRanks(accountIds: number[]) {
 
 export function useMateStats(accountId: number) {
   return useQuery({ queryKey: ['mate-stats', accountId], queryFn: ({ signal }) => fetchMateStats(accountId, signal), enabled: ok(accountId), ...PLAYER });
+}
+
+/** Per-hero stats of one or more accounts (dashboard, compare), optionally only the last `days`. */
+export function usePlayersHeroStats(accountIds: number[], days?: number) {
+  const ids = useMemo(() => [...new Set(accountIds.filter(ok))].sort((a, b) => a - b), [accountIds]);
+  return useQuery({
+    queryKey: ['players-hero-stats', ids, days ?? 0],
+    queryFn: ({ signal }) => fetchPlayersHeroStats(ids, days, signal),
+    enabled: ids.length > 0,
+    ...PLAYER,
+  });
 }

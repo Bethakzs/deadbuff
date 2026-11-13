@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react';
+import { useAuth } from './auth';
 
 /*
- * "It's me" — stage 1 stand-in for Steam login: the visitor marks a player page as their own and
- * we remember the account id in this browser. Stage 2 (Steam OpenID via a Cloudflare Function)
- * will set the same value from the server session instead.
+ * "Me" = the Steam account linked to the logged-in user (lib/auth.ts). Guests — and users who
+ * haven't linked Steam — can still mark a player page with "It's me": that account id is kept in
+ * this browser's localStorage. The linked account always wins.
  */
 const KEY = 'deadbuff.me.v1';
 const listeners = new Set<() => void>();
@@ -37,5 +38,12 @@ const subscribe = (l: () => void) => {
   };
 };
 
-/** The account id marked as "me" in this browser, or null. */
-export const useMe = () => useSyncExternalStore(subscribe, read, () => null);
+/** The account id marked as "me" in this browser (ignores the login), or null. */
+export const useLocalMe = () => useSyncExternalStore(subscribe, read, () => null);
+
+/** "My" Deadlock account: the logged-in user's Steam account, else the one marked "It's me" here. */
+export function useMe(): number | null {
+  const local = useLocalMe();
+  const { user } = useAuth();
+  return user?.accountId ?? local;
+}

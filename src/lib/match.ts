@@ -2,7 +2,15 @@
  * Derived numbers for the match page: team totals, lane outcomes and
  * objective counts. Pure functions over /matches/{id}/metadata.
  * ------------------------------------------------------------------ */
-import type { MatchInfo, MatchPlayer, MatchStatSnapshot } from './types';
+import { isShopItem } from './items';
+import type { Item, MatchInfo, MatchItemEvent, MatchPlayer, MatchStatSnapshot } from './types';
+
+/** Shop purchases in buy order (ability unlocks / upgrades are filtered out). */
+export const purchases = (p: MatchPlayer, byId: Map<number, Item>) =>
+  (p.items ?? [])
+    .map((e) => ({ e, item: byId.get(e.item_id) }))
+    .filter((x): x is { e: MatchItemEvent; item: Item } => !!x.item && isShopItem(x.item))
+    .sort((a, b) => a.e.game_time_s - b.e.game_time_s);
 
 /** The laning phase is over around 10 minutes — lane winners are judged on souls at that point. */
 export const LANE_END_S = 600;

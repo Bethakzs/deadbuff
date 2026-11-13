@@ -30,7 +30,10 @@ const PAGES: { to: string; key: MsgKey; extra: string[] }[] = [
   { to: '/matches', key: 'nav.matches', extra: ['match', 'matches', 'match id', 'game'] },
   { to: '/leaderboard', key: 'nav.leaderboard', extra: ['leaderboard', 'ranked', 'ladder', 'top'] },
   { to: '/players', key: 'nav.players', extra: ['players', 'player', 'profile', 'search player'] },
-  { to: '/me', key: 'nav.me', extra: ['my profile', 'my account', 'my stats', 'my statistics', 'me'] },
+  { to: '/draft', key: 'nav.draft', extra: ['draft', 'drafter', 'counter pick', 'counterpick', 'pick', 'team builder'] },
+  { to: '/me', key: 'nav.dashboard', extra: ['dashboard', 'my profile', 'my account', 'my stats', 'my statistics', 'me'] },
+  { to: '/compare', key: 'nav.compare', extra: ['compare', 'vs friend', 'versus'] },
+  { to: '/login', key: 'auth.login', extra: ['login', 'log in', 'sign in', 'register', 'sign up', 'steam'] },
 ];
 
 /** Hero sub-pages, so "haze build" or "haze counters" jumps straight to the right tab. */
