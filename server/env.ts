@@ -6,6 +6,7 @@
  * Cloudflare dashboard → Workers & Pages → deadbuff → Settings:
  *   Bindings → D1 database, variable name `DB`
  *   Variables and Secrets → `SESSION_SECRET` (type Secret, long random string)
+ *   Variables and Secrets → `ADMIN_USERS` (type Text): who may open /admin — Deadbuff usernames and/or Steam ids
  * ------------------------------------------------------------------ */
 export interface Env {
   /** D1 (SQLite) database: users, favourites, login throttle. Tables are created on first use. */
@@ -20,6 +21,11 @@ export interface Env {
   PBKDF2_ITERATIONS?: string;
   /** Optional Deadlock API key — the proxy sends it as X-API-KEY (higher rate limits). */
   DEADLOCK_API_KEY?: string;
+  /**
+   * Who may see the site statistics (/admin, /api/admin/stats): Deadbuff usernames and/or Steam ids
+   * (SteamID64, account id or a steamcommunity.com/profiles/… link), separated by commas. Unset = nobody.
+   */
+  ADMIN_USERS?: string;
 }
 
 export type Fn<P extends string = string> = PagesFunction<Env, P>;

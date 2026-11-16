@@ -1,12 +1,13 @@
 /* POST /api/auth/register { username, email, password } → { user } + session cookie. No e-mail confirmation (owner's call). */
-import { EMAIL, needAccounts, PASSWORD_MAX, PASSWORD_MIN, USERNAME } from '../../../server/auth';
-import { createUser, emailTaken, publicUser, throttle, usernameTaken } from '../../../server/db';
+import { EMAIL, needAccounts, PASSWORD_MAX, PASSWORD_MIN, USERNAME, userPayload } from '../../../server/auth';
+import { createUser, emailTaken, throttle, usernameTaken } from '../../../server/db';
+import { logEvent } from '../../../server/stats';
 import type { Fn } from '../../../server/env';
 import { clientIp, fail, json, readJson, sameOrigin } from '../../../server/http';
 import { hashPassword, roundsFrom } from '../../../server/password';
 import { sessionCookies } from '../../../server/session';
 
-export const onRequestPost: Fn = async ({ request, env }) => {
+export const onRequestPost: Fn = async ({ request, env, waitUntil }) => {
   const ctx = needAccounts(env);
   if (ctx instanceof Response) return ctx;
   if (!sameOrigin(request)) return fail('bad_origin', 403);
@@ -34,5 +35,6 @@ export const onRequestPost: Fn = async ({ request, env }) => {
     return fail('username_taken', 409);
   }
   if (!user) return fail('server_error', 500);
-  return json({ user: publicUser(user) }, {}, await sessionCookies(ctx.secret, user.id));
+  waitUntil(logEvent(ctx.db, 'register_password', user.id));
+  return json({ user: userPayload(env, user) }, {}, await sessionCookies(ctx.secret, user.id));
 };

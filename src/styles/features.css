@@ -870,3 +870,218 @@ button.player-result {
   }
 }
 
+
+/* ------------------------------- admin (/admin) ----------------------------- */
+/* Owner-only site stats. Steam = Steam's cool steel (like .steam-btn), password = brass. */
+.admin-gate {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  max-width: 560px;
+}
+.admin-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.admin-tile {
+  --accent: var(--brass);
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--panel), var(--bg-raise));
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.admin-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0.8;
+}
+.admin-tile__val {
+  font-family: var(--font-display);
+  font-size-adjust: var(--display-adjust);
+  font-size: 38px;
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--text);
+}
+.admin-tile__label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.admin-tile__sub {
+  font-size: 12px;
+}
+.admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+.admin-bars {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  height: 180px;
+}
+.admin-bars__col {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.admin-bars__plot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.admin-bars--stack .admin-bars__plot {
+  flex-direction: column-reverse;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+}
+.admin-bars__plot span {
+  display: block;
+  min-height: 0;
+  border-radius: 2px 2px 0 0;
+}
+.admin-bars--pair .admin-bars__plot span {
+  flex: 1 1 0;
+  max-width: 14px;
+}
+.admin-bars__day {
+  padding-top: 4px;
+  font-size: 10px;
+  text-align: center;
+  color: var(--faint);
+}
+.admin-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.admin-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.admin-events {
+  display: grid;
+  gap: 10px;
+}
+.admin-events li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+}
+.admin-events b {
+  font-size: 18px;
+  color: var(--text);
+}
+.admin-note {
+  margin-top: 12px;
+}
+.admin-pages {
+  display: grid;
+  gap: 6px;
+}
+.admin-pages li {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.admin-pages__bar {
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto 0 0;
+  background: rgb(217 169 91 / 0.12);
+}
+.admin-pages__path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text-2);
+}
+.admin-pages__path:hover {
+  color: var(--brass-hi);
+}
+.admin-langs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+.admin-langs .chip b {
+  margin-left: 4px;
+  color: var(--brass-hi);
+}
+.admin-table-wrap {
+  overflow-x: auto;
+}
+.admin-table__user {
+  font-weight: 600;
+}
+.admin-method {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.admin-method--steam {
+  color: rgb(158 190 222);
+  border: 1px solid rgb(158 190 222 / 0.4);
+}
+.admin-method--password {
+  color: var(--brass-hi);
+  border: 1px solid rgb(217 169 91 / 0.4);
+}
+.admin-page .is-refreshing {
+  opacity: 0.6;
+  transition: opacity var(--dur);
+}
+@media (max-width: 900px) {
+  .admin-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .admin-tile__val {
+    font-size: 30px;
+  }
+  .admin-bars {
+    height: 140px;
+    gap: 2px;
+  }
+}

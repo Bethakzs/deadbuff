@@ -261,6 +261,8 @@ function AccountMenu() {
     ...(me ? [{ to: `/players/${me}`, key: 'nav.me' as MsgKey }] : []),
     { to: '/compare', key: 'nav.compare' },
     { to: user ? '/account' : '/login', key: user ? 'nav.account' : 'auth.login' },
+    // the owner (ADMIN_USERS on the server) also gets the site statistics
+    ...(user?.admin ? [{ to: '/admin', key: 'nav.admin' as MsgKey }] : []),
   ];
 
   return (

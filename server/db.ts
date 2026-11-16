@@ -32,6 +32,34 @@ const SCHEMA = [
      hits     INTEGER NOT NULL,
      reset_at INTEGER NOT NULL
    )`,
+  // ---- site statistics for the owner (/admin), see server/stats.ts ----
+  // sign-ups, sign-ins and Steam links; user_id is cleared when the account is deleted
+  `CREATE TABLE IF NOT EXISTS auth_events (
+     id      INTEGER PRIMARY KEY AUTOINCREMENT,
+     kind    TEXT NOT NULL,
+     user_id INTEGER,
+     at      INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS auth_events_at ON auth_events (at)`,
+  // logged-in users seen per UTC day (one row per user and day — /api/me)
+  `CREATE TABLE IF NOT EXISTS user_days (
+     user_id INTEGER NOT NULL,
+     day     TEXT NOT NULL,
+     PRIMARY KEY (user_id, day)
+   )`,
+  // page views per UTC day and path (counted by the SPA's beacon, bots skipped)
+  `CREATE TABLE IF NOT EXISTS page_views (
+     day   TEXT NOT NULL,
+     path  TEXT NOT NULL,
+     views INTEGER NOT NULL,
+     PRIMARY KEY (day, path)
+   )`,
+  // unique visitors per day: a salted daily hash of IP + browser, no cookie, can't be traced back
+  `CREATE TABLE IF NOT EXISTS day_visitors (
+     day TEXT NOT NULL,
+     vid TEXT NOT NULL,
+     PRIMARY KEY (day, vid)
+   )`,
 ];
 
 /** Runs `fn`; if a table is missing (fresh database) creates the schema and runs it once more. */
@@ -121,7 +149,15 @@ export const setAccount = (db: D1Database, id: number, accountId: number | null)
   q(db, () => db.prepare('UPDATE users SET account_id = ? WHERE id = ? RETURNING *').bind(accountId, id).first<UserRow>());
 
 export async function deleteUser(db: D1Database, id: number) {
-  await q(db, () => db.batch([db.prepare('DELETE FROM favorites WHERE user_id = ?').bind(id), db.prepare('DELETE FROM users WHERE id = ?').bind(id)]));
+  await q(db, () =>
+    db.batch([
+      db.prepare('DELETE FROM favorites WHERE user_id = ?').bind(id),
+      db.prepare('DELETE FROM user_days WHERE user_id = ?').bind(id),
+      // keep the counts, forget who
+      db.prepare('UPDATE auth_events SET user_id = NULL WHERE user_id = ?').bind(id),
+      db.prepare('DELETE FROM users WHERE id = ?').bind(id),
+    ]),
+  );
 }
 
 /* ------------------------------ favourites ----------------------------- */

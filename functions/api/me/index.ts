@@ -2,17 +2,22 @@
  * GET    /api/me → { user } (null when logged out; a stale session cookie is cleared)
  * DELETE /api/me → deletes the account and its favourites, logs out
  */
-import { currentUser } from '../../../server/auth';
-import { deleteUser, publicUser } from '../../../server/db';
+import { currentUser, userPayload } from '../../../server/auth';
+import { deleteUser } from '../../../server/db';
+import { markActive } from '../../../server/stats';
 import { accountEnv, type Fn } from '../../../server/env';
 import { fail, json, sameOrigin } from '../../../server/http';
 import { clearCookies, hasSessionCookie } from '../../../server/session';
 
-export const onRequestGet: Fn = async ({ request, env }) => {
+export const onRequestGet: Fn = async ({ request, env, waitUntil }) => {
   const ctx = accountEnv(env);
   // accounts not configured → simply "nobody is logged in"
   const user = ctx ? await currentUser(ctx, request) : null;
-  if (user) return json({ user: publicUser(user) });
+  if (user && ctx) {
+    // "active users" in the owner's stats — at most one row per user and day
+    waitUntil(markActive(ctx.db, user.id));
+    return json({ user: userPayload(env, user) });
+  }
   return json({ user: null }, {}, hasSessionCookie(request) ? clearCookies() : []);
 };
 

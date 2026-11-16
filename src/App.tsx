@@ -2,7 +2,9 @@ import { AnimatePresence } from 'framer-motion';
 import { useEffect, useRef } from 'react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { sendPageView } from './lib/admin';
 import { AboutPage } from './pages/About';
+import { AdminPage } from './pages/Admin';
 import { AccountPage } from './pages/Account';
 import { BuildsPage } from './pages/Builds';
 import { ComparePage } from './pages/Compare';
@@ -42,6 +44,11 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
   }, [key]);
 
+  // one page view per path for the owner's stats (/admin); the full URL path keeps the language prefix
+  useEffect(() => {
+    sendPageView(window.location.pathname);
+  }, [location.pathname]);
+
   return (
     <Layout>
       <AnimatePresence mode="wait" initial={false}>
@@ -67,6 +74,7 @@ export default function App() {
           <Route path="/patches" element={<PatchesPage />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AnimatePresence>

@@ -9,6 +9,7 @@ import { createUser, setAccount, touchLogin, userByAccount, usernameTaken } from
 import type { Fn } from '../../../../server/env';
 import { getCookie, safeNext } from '../../../../server/http';
 import { sessionCookies } from '../../../../server/session';
+import { logEvent } from '../../../../server/stats';
 import { NONCE_COOKIE, verifySteamCallback } from '../../../../server/steam-openid';
 
 const clearNonce = `${NONCE_COOKIE}=; Path=/api/auth/steam; Max-Age=0; Secure; SameSite=Lax; HttpOnly`;
@@ -51,7 +52,10 @@ export const onRequestGet: Fn = async ({ request, env, waitUntil }) => {
     const me = await currentUser(ctx, request);
     if (!me) return redirect(url.origin, '/login', 'error');
     if (owner && owner.id !== me.id) return redirect(url.origin, next, 'taken');
-    if (!owner) await setAccount(ctx.db, me.id, accountId);
+    if (!owner) {
+      await setAccount(ctx.db, me.id, accountId);
+      waitUntil(logEvent(ctx.db, 'link_steam', me.id));
+    }
     return redirect(url.origin, next, 'linked');
   }
 
@@ -59,12 +63,14 @@ export const onRequestGet: Fn = async ({ request, env, waitUntil }) => {
   let user = owner;
   if (user) {
     waitUntil(touchLogin(ctx.db, user.id).then(() => undefined));
+    waitUntil(logEvent(ctx.db, 'login_steam', user.id));
   } else {
     const base = usernameFromPersona(await personaName(accountId));
     let name = base;
     for (let i = 0; i < 6 && (await usernameTaken(ctx.db, name)); i++) name = `${base.slice(0, 19)}-${Math.floor(1000 + Math.random() * 9000)}`;
     try {
       user = await createUser(ctx.db, { username: name, email: null, passHash: null, accountId });
+      if (user) waitUntil(logEvent(ctx.db, 'register_steam', user.id));
     } catch {
       user = await userByAccount(ctx.db, accountId); // a parallel callback created it first
     }

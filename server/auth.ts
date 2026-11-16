@@ -1,6 +1,7 @@
 /* Shared glue for the account endpoints: config check, current user, validation rules. */
+import { parseAccountInput } from '../src/lib/steam';
 import { accountEnv, type Env } from './env';
-import { userById, type UserRow } from './db';
+import { nameKey, publicUser, userById, type UserRow } from './db';
 import { fail } from './http';
 import { readSession } from './session';
 
@@ -19,6 +20,17 @@ export async function currentUser(ctx: AuthCtx, req: Request): Promise<UserRow |
   const id = await readSession(ctx.secret, req);
   return id ? userById(ctx.db, id) : null;
 }
+
+/** ADMIN_USERS lists this user — by Deadbuff username (any case) or by the linked Steam account. */
+export function isAdmin(env: Env, u: UserRow | null): boolean {
+  if (!u || !env.ADMIN_USERS) return false;
+  return env.ADMIN_USERS.split(/[\s,;]+/)
+    .filter(Boolean)
+    .some((token) => nameKey(token) === nameKey(u.username) || (u.account_id !== null && parseAccountInput(token) === u.account_id));
+}
+
+/** What the SPA gets for the logged-in user: the public fields + `admin: true` for the owner. */
+export const userPayload = (env: Env, u: UserRow) => ({ ...publicUser(u), ...(isAdmin(env, u) ? { admin: true } : {}) });
 
 /** Letters (any script), digits, "_", "-", "." — 3 to 24 characters. */
 export const USERNAME = /^[\p{L}\p{N}_.-]{3,24}$/u;

@@ -16,6 +16,8 @@ export interface User {
   accountId: number | null;
   hasPassword: boolean;
   createdAt: number;
+  /** listed in ADMIN_USERS on the server → may open /admin (site stats) */
+  admin?: boolean;
 }
 
 /** Error codes the backend returns (translated as `auth.err.<code>`). */

@@ -210,6 +210,9 @@ functions/                       file-based routes (each file = an endpoint)
   api/me/index.ts                GET  → { user | null } · DELETE → delete account + favourites
   api/me/steam.ts                DELETE → unlink Steam (only when the user has a password)
   api/favorites.ts               GET list · POST {kind,id} | {items:[…]} · DELETE {kind,id} → { items }
+  api/nav.ts                     POST {p: path} → 204 — one page view (SPA beacon, production only; bots / other
+                                 origins / odd paths dropped; no cookie)
+  api/admin/stats.ts             GET ?days=7|30|90|0 → AdminStats, only for ADMIN_USERS (401 guest, 403 others)
   api/[[rest]].ts                any other /api/* → JSON 404
 server/                          shared code (outside functions/ so it doesn't become routes)
   env.ts        Env bindings (DB, SESSION_SECRET, PBKDF2_ITERATIONS, DEADLOCK_API_KEY), accountEnv()
@@ -218,7 +221,10 @@ server/                          shared code (outside functions/ so it doesn't b
   password.ts   PBKDF2-SHA256 "pbkdf2_sha256$<rounds>$<salt>$<hash>", constant-time verify, rehash on login when rounds grow
   db.ts         SCHEMA (created on first "no such table"), users / favorites / auth_throttle queries
   steam-openid.ts  redirect URL + check_authentication verification
-  auth.ts       currentUser(), validation rules, username from a Steam persona name
+  auth.ts       currentUser(), isAdmin() (ADMIN_USERS: usernames and/or Steam ids), userPayload() (public user +
+                `admin: true`), validation rules, username from a Steam persona name
+  stats.ts      owner stats: logEvent() (auth_events), markActive() (user_days), recordView() (page_views +
+                day_visitors), normalizePath(), visitorId() (daily salted hash), adminStats() (the /admin report)
 ```
 - **Proxy** (`/api/dl`): GET only, sections `assets|analytics|builds|players|matches|leaderboard|patches`. Cache key =
   path + sorted query in `caches.default`. Per-section policy (`policy()`): fresh time (assets 6 h, analytics/patches
@@ -228,6 +234,15 @@ server/                          shared code (outside functions/ so it doesn't b
   the API carries `x-proxy-upstream: 1` (+ `x-cache: hit|stale|miss`); `lib/api.ts` treats a response WITHOUT
   that header (quota page, HTML fallback, network error) as "proxy unavailable" and switches to the direct API
   for the rest of the session. Cache API works on the custom domain (not on `*.pages.dev`).
+- **Owner stats** (`server/stats.ts`, `/admin`): sign-up method comes from `users` itself (Steam sign-ups never get a
+  password → `pass_hash IS NULL`), so it covers every account; sign-ins / sign-ups / Steam links are logged in
+  `auth_events` from 17.11.2026; `/api/me` marks the user active for the day (`user_days`); the SPA sends one
+  `POST /api/nav` per route change (production builds) → `page_views` (day × path, player / match ids folded to
+  `:id`) + `day_visitors` (SHA-256 of day + IP + UA + SESSION_SECRET, truncated — no cookie, unlinkable across
+  days). Cost: +1 Function call and 2 D1 writes per page view (Free: 100k calls and 100k rows written per day).
+  `/api/` stays disallowed in robots.txt, so Googlebot renders are not counted. Deleting an account removes its
+  `user_days` and clears `user_id` in `auth_events`. Endpoint name is `/api/nav` on purpose: "hit"/"track"/"collect"
+  paths are on ad-block lists.
 - **Sessions** are stateless (no sessions table). Logout clears cookies; to log everyone out rotate `SESSION_SECRET`.
   `db_auth=1` (readable by JS, no secret) lets the SPA skip `/api/me` for guests.
 - **Security**: every POST/DELETE checks the `Origin` header (+ SameSite=Lax cookie); the user id comes only
@@ -298,6 +313,7 @@ src/
 " OR "<br><br>" depending on the hero)
     seo.ts                 useDocumentMeta(title, description) — runtime twin of the prerendered tags
     steam.ts               SteamID64 ⇄ account_id, parseAccountInput() (links, SteamID3, ids) — also used by server/
+    admin.ts               AdminStats type (copy of server/stats.ts), useAdminStats(), sendPageView() → /api/nav, dayRange()
     me.ts                  useMe() = linked Steam account of the logged-in user, else "It's me" (localStorage,
                            setMe()/useLocalMe())
     match.ts               match page maths: purchases(), teamTotals(), laneResults() (who won each lane on souls at 10:00),
@@ -372,6 +388,8 @@ src/
     Login.tsx              /login: Sign in with Steam + log in / sign up form (?mode=register, ?next=/path).
                            Exports SteamButton, SteamGlyph
     Account.tsx            /account: details, Steam link/unlink, log out, delete account
+    Admin.tsx              /admin (owner only): accounts by sign-up method, active users, sign-ins by kind, sign-ups
+                           and views by day (CSS bar charts), top pages, languages, newest accounts
     Dashboard.tsx          /me: your WR per hero vs the average at your rank, strongest / weakest heroes, tiles,
                            favourites, recent matches. Exports PeriodSwitch (30 d / 90 d / all), heroVsRank(),
                            totals(), useRankName()
@@ -428,6 +446,7 @@ src/
 | `/players` | Player search (Steam name, profile link, SteamID64, SteamID3 or account id) |
 | `/players/:accountId` | Player profile: rank, recent form, match history, heroes, teammates; "It's me" button |
 | `/me` | Personal dashboard of "me" (linked Steam account, else "It's me"); guests get a sign-in prompt (SPA only) |
+| `/admin` | Site stats for the owner (users in the `ADMIN_USERS` variable): sign-ups Steam vs password, sign-ins, active users, page views. Shown in the account menu only to admins. SPA only (rewritten to `/app`) |
 | `*` | 404 |
 
 **Every route also exists under `/uk`, `/de`, `/es`, `/ru`** (`/uk/heroes/haze/builds`). The language prefix is the React Router
@@ -861,6 +880,9 @@ Rules:
   (вінрейт проти, очікуваний, ефект), кого обігрує герой, предмети проти нього, кнопка «додати решту ворожої команди»
 - **Акаунти**: `/login` — вхід через Steam або логін/e-mail + пароль, реєстрація без підтвердження пошти;
   `/account` — підключити / відключити Steam, вийти, видалити акаунт. В шапці — кнопка «Увійти» або аватар з меню
+- `/admin` — **статистика сайту для власника** (лише для логінів зі змінної `ADMIN_USERS`): скільки користувачів,
+  скільки зареєструвались через Steam і скільки з паролем, входи (Steam / пароль), активні, реєстрації й перегляди
+  по днях, топ сторінок, мови, нові акаунти. У меню акаунта з'являється пункт «Статистика сайту»
 - **Обране**: зірочка на сторінці героя і на кожному білді; у гостя зберігається в браузері, після входу
   переноситься в акаунт
 - `/me` — **особистий дашборд**: вінрейт на кожному герої проти середнього на твоєму ранзі, найсильніші й
@@ -899,6 +921,7 @@ Rules:
 | Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47, «Сторінка з переспрямуванням» 1. Причина: robots.txt блокував `/api/`, тож Google рендерив сторінки без даних. Фікс `Allow: /api/dl/` задеплоєно 16.11 (`1777df3`) — розділ 6, п. 22. Власнику: «Перевірити виправлення» в GSC |
 | Партнерство | ✅ Deadbuff — офіційний партнер Deadlock API (іконка серед трекерів на deadlock-api.com, поки без посилання) |
 | Швидкість головної | ✅ 17.11: на телефонах вітрина без важкого фону (−4 МБ), запушено (розділ 6, п. 25) |
+| Статистика сайту `/admin` | ✅ Запушено 17.11 (перевірено локально з wrangler + D1). **Власнику:** `ADMIN_USERS` = свій SteamID64 у Cloudflare (розділ 3 → «Бекенд», крок 6), увійти через Steam |
 | Аналітика | Cloudflare Web Analytics: **Workers & Pages → deadbuff → Metrics** (зняти фільтр «Site is in deadbuff.pages.dev», інакше видно лише pages.dev). За 13–16.11: 41 відвідування, 208 переглядів, топ — `/builds`, `/`, `/heroes` |
 | Деплой 16.11 | ✅ Запушено 16.11: новий драфт-помічник, сторінки `/counters`, блок драфту на головній, свайп вітрини й «Зрізу мети» на телефоні, партнер у футері, текст про ingest tool, сторінка `/about` зі стрімом власника. Збірка проходить (2160 сторінок), перевірено в браузері (EN/UA/DE, 375px) |
 
@@ -943,6 +966,10 @@ Rules:
    Якщо він засвітився — замінити (усіх розлогінить, і це нормально)
 4. **Deployments → … → Retry deployment** (або будь-який пуш) — прив'язки діють з нового деплою
 5. Перевірити: deadbuff.net → «Увійти» → зареєструватися → зірочка на герої → дашборд
+6. **Статистика сайту (`/admin`)**: там же **Settings → Variables and Secrets → Add** → Type **Text**, name
+   **`ADMIN_USERS`**, value — свій логін на Deadbuff (видно на `/account`) або посилання на свій Steam-профіль
+   (`https://steamcommunity.com/profiles/7656119…`); кілька — через кому → Save → Deployments → Retry deployment
+   (або будь-який пуш). Після цього в меню акаунта з'явиться «Статистика сайту». Нові таблиці в D1 створяться самі
 
 Опційно: `PBKDF2_ITERATIONS=100000` — лише якщо перейти на Workers Paid ($5/міс); `DEADLOCK_API_KEY` — якщо API почне обмежувати запити.
 
@@ -1121,6 +1148,10 @@ Rules:
     - головна: блок «Кого пікнути проти цього складу» (6 найпопулярніших героїв як ворожий склад → драфт), чип у банері
     - мобілка: вітрину «#N у меті» можна гортати свайпом; три панелі «Зрізу мети» — горизонтальна стрічка зі свайпом
     - текст на профілі гравця: замість «додай бота в Steam» — ingest tool (deadlock-api.com/ingest-cache)
+26. **17.11 — статистика для власника.** Запит: «бачити, скільки користувачів зареєструвалось, скільки входило через
+    Steam, скільки переходило на сторінки». Зроблено `/admin` (лише для `ADMIN_USERS`): спосіб реєстрації береться з
+    таблиці users для всіх акаунтів; входи, реєстрації й прив'язки Steam логуються з 17.11; перегляди рахує сам сайт
+    (маячок `/api/nav`, без cookie, без ботів). Входи до 17.11 не відновити — раніше їх ніде не записували
 25. **17.11 — швидкість головної.** Cloudflare Web Analytics: 41 відвідування / 208 переглядів за 7 днів, 95% Core Web
     Vitals зелені, червоні лише на головній (`/`, `/uk`). Причина — фон вітрини «#N у меті» (0,8–1,7 МБ на героя):
     телефон за перші секунди тягнув ~4 МБ. Тепер на телефонах фон не вантажиться (градієнт у кольорі героя), на
@@ -1191,6 +1222,7 @@ nurse-harrow 10/3/5/0, baba 4/6/8/5.
 0a. **Відновлення пароля** немає (немає відправки пошти — власник не хотів підтвердження e-mail). Якщо потрібне —
    знадобиться поштовий сервіс (наприклад, Resend, безкоштовно до 3 тис. листів/міс) або Cloudflare Email Workers
 0. ✅ Зміни 16.11 (драфт, контрпіки, головна, футер, `/about`) запушено. **Власнику:** глянути /draft, /counters/haze, /about на телефоні
+0a0. ⏳ Додати `ADMIN_USERS` (SteamID64 власника) у Cloudflare (розділ 3 → «Бекенд», крок 6) — `/admin` запушено 17.11
 0a1. Перевірити, що посилання на Twitch правильне: **twitch.tv/bethakzs** (на `/about`, у `About.tsx` → `TWITCH_URL` і в
    `scripts/prerender.ts`)
 0a2. Попросити Deadlock API зробити іконку Deadbuff на їхній головній **посиланням** на deadbuff.net (зараз це лише
@@ -1369,5 +1401,7 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   головній, свайпи на мобілці, ingest tool (розділ 6, п. 23); оновлено розділи 1, 2, 5, 9, 12 і Частину I (§1, §4, §6–8, §10)
 - **16.11.2026 (третя частина)** — сторінка `/about` зі стрімером BethakZS (розділ 6, п. 24); оновлено розділи 1, 2, 9, 11 і
   Частину I (§3, §4, §8)
+- **17.11.2026 (друга частина)** — статистика сайту `/admin` для власника (розділ 6, п. 26); оновлено розділи 1–3, 9 і
+  Частину I (§3 бекенд, §4, маршрути)
 - **17.11.2026** — розбір Web Analytics і GSC, швидкість головної на телефонах (розділ 6, п. 25); оновлено розділ 2 і
   Частину I (§4, §8, §10)

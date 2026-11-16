@@ -1,6 +1,7 @@
 /* POST /api/auth/login { login (username or e-mail), password } → { user } + session cookie. */
-import { needAccounts, PASSWORD_MAX } from '../../../server/auth';
-import { publicUser, setPassHash, throttle, touchLogin, userByLogin } from '../../../server/db';
+import { needAccounts, PASSWORD_MAX, userPayload } from '../../../server/auth';
+import { setPassHash, throttle, touchLogin, userByLogin } from '../../../server/db';
+import { logEvent } from '../../../server/stats';
 import type { Fn } from '../../../server/env';
 import { clientIp, fail, json, readJson, sameOrigin } from '../../../server/http';
 import { hashPassword, roundsFrom, verifyPassword } from '../../../server/password';
@@ -30,7 +31,8 @@ export const onRequestPost: Fn = async ({ request, env, waitUntil }) => {
   if (!check.ok) return fail('bad_credentials', 401);
 
   waitUntil(touchLogin(ctx.db, user.id).then(() => undefined));
+  waitUntil(logEvent(ctx.db, 'login_password', user.id));
   // the iteration setting was raised since this hash was made → upgrade it now that we know the password
   if (check.rounds < rounds) waitUntil(hashPassword(password, rounds).then((h) => setPassHash(ctx.db, user.id, h)).then(() => undefined));
-  return json({ user: publicUser(user) }, {}, await sessionCookies(ctx.secret, user.id));
+  return json({ user: userPayload(env, user) }, {}, await sessionCookies(ctx.secret, user.id));
 };

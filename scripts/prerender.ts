@@ -671,7 +671,7 @@ async function main() {
   await write(
     '_redirects',
     [
-      ...LANGS.flatMap((l) => ['/players/*', '/matches/*', '/me', '/login', '/account', '/compare'].map((p) => `${l.prefix}${p}  /app  200`)),
+      ...LANGS.flatMap((l) => ['/players/*', '/matches/*', '/me', '/login', '/account', '/compare', '/admin'].map((p) => `${l.prefix}${p}  /app  200`)),
       '',
     ].join('\n'),
   );
