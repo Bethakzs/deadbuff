@@ -603,6 +603,12 @@ async function main() {
   const list = pages(data);
   for (const page of list) for (const l of LANGS) await write(fileFor(pathForLang(page.path, l.id)), render(template, page, l.id));
 
+  // Googlebot renders pages with JS and obeys robots.txt for every request the page makes. React replaces
+  // the static text on mount, so if the data calls are blocked Google indexes a skeleton / error state
+  // instead of the page ("Crawled – currently not indexed"). The API proxy must stay crawlable
+  // (longest rule wins: Allow /api/dl/ beats Disallow /api/); the direct fallback, api.deadlock-api.com,
+  // disallows all bots in its own robots.txt. Auth / account endpoints stay blocked.
+  const robots = 'User-agent: *\nAllow: /\nAllow: /api/dl/\nDisallow: /api/\n';
   const today = new Date().toISOString().slice(0, 10);
   if (SITE_URL) {
     const urls = list.flatMap((page) =>
@@ -617,9 +623,9 @@ async function main() {
       'sitemap.xml',
       `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls.join('\n')}\n</urlset>\n`,
     );
-    await write('robots.txt', `User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: ${SITE_URL}/sitemap.xml\n`);
+    await write('robots.txt', `${robots}\nSitemap: ${SITE_URL}/sitemap.xml\n`);
   } else {
-    await write('robots.txt', 'User-agent: *\nAllow: /\nDisallow: /api/\n');
+    await write('robots.txt', robots);
     console.warn('[prerender] SITE_URL is not set — skipped canonical/hreflang links and sitemap.xml (set it in the hosting build settings)');
   }
   console.log(`[prerender] ${list.length * LANGS.length} pages written (${list.length} routes × ${LANGS.length} languages)`);

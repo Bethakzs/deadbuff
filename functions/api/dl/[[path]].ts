@@ -89,6 +89,8 @@ function toClient(res: Response, p: Policy, state: 'hit' | 'stale' | 'miss'): Re
   out.headers.set('cache-control', res.status === 200 ? `public, max-age=${p.browser}` : 'no-store');
   out.headers.set('x-cache', state);
   out.headers.set('x-proxy-upstream', '1');
+  // robots.txt lets crawlers fetch /api/dl/ (Googlebot needs the data to render pages) — but never list the JSON itself
+  out.headers.set('x-robots-tag', 'noindex');
   out.headers.delete('x-fetched-at');
   return out;
 }
@@ -98,7 +100,7 @@ export const onRequestGet: Fn<'path'> = async (context) => {
   const url = new URL(request.url);
   const path = (Array.isArray(params.path) ? params.path : [params.path]).filter(Boolean).join('/');
   if (!SECTIONS.test(path) || path.length > 200 || url.search.length > 4000) {
-    return new Response('Not found', { status: 404 });
+    return new Response('Not found', { status: 404, headers: { 'x-robots-tag': 'noindex' } });
   }
 
   const p = policy(path);
@@ -125,7 +127,7 @@ export const onRequestGet: Fn<'path'> = async (context) => {
     if (cached) return toClient(cached, p, 'stale');
     return new Response(JSON.stringify({ error: 'upstream_unreachable' }), {
       status: 502,
-      headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-proxy-upstream': '1' },
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-proxy-upstream': '1', 'x-robots-tag': 'noindex' },
     });
   }
 };
