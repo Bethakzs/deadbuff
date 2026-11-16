@@ -213,6 +213,17 @@ export function useTopItemStats(heroId: number | undefined) {
 }
 
 /** One hero's item stats against each of the given enemies (draft: "what to build vs this lineup"). */
+/** Items of every hero in games against one enemy (/counters/:slug — "items against Haze"). */
+export function useItemStatsVsEnemy(enemyId: number | undefined) {
+  const { filters } = useFilters();
+  return useQuery({
+    queryKey: ['item-stats-vs', filters, 'all', enemyId],
+    queryFn: ({ signal }) => fetchItemStatsVsEnemy(filters, undefined, enemyId!, signal),
+    enabled: enemyId !== undefined,
+    staleTime: 30 * 60_000,
+  });
+}
+
 export function useItemStatsVsEnemies(heroId: number | undefined, enemyIds: number[]) {
   const { filters } = useFilters();
   const results = useQueries({

@@ -287,7 +287,7 @@ export function PlayerPage() {
             )}
             <p className="muted small-note">
               {t('player.dataNote')} ·{' '}
-              <a className="link-more" href="https://deadlock-api.com" target="_blank" rel="noreferrer">
+              <a className="link-more" href="https://deadlock-api.com/ingest-cache" target="_blank" rel="noopener">
                 {t('player.howTo')}
               </a>
             </p>

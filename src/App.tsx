@@ -2,9 +2,11 @@ import { AnimatePresence } from 'framer-motion';
 import { useEffect, useRef } from 'react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { AboutPage } from './pages/About';
 import { AccountPage } from './pages/Account';
 import { BuildsPage } from './pages/Builds';
 import { ComparePage } from './pages/Compare';
+import { CountersIndexPage, CountersPage } from './pages/Counters';
 import { DashboardPage } from './pages/Dashboard';
 import { DraftPage } from './pages/Draft';
 import { HeroPage } from './pages/hero/HeroPage';
@@ -58,10 +60,13 @@ export default function App() {
           <Route path="/account" element={<AccountPage />} />
           <Route path="/compare" element={<ComparePage />} />
           <Route path="/draft" element={<DraftPage />} />
+          <Route path="/counters" element={<CountersIndexPage />} />
+          <Route path="/counters/:slug" element={<CountersPage />} />
           <Route path="/matches" element={<MatchesPage />} />
           <Route path="/matches/:matchId" element={<MatchPage />} />
           <Route path="/patches" element={<PatchesPage />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />
+          <Route path="/about" element={<AboutPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AnimatePresence>

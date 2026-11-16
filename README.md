@@ -50,7 +50,7 @@ hero, ability and item texts use the game's own translation.
 npm install
 npm run dev          # http://localhost:5173 (API called directly; /api/* proxied to :8788)
 npm run dev:api      # backend: Pages Functions + local D1 on :8788 (accounts, favourites, API proxy)
-npm run build        # dist/ — typecheck (app + functions), vite build, SEO prerender (~1930 pages, sitemap, robots)
+npm run build        # dist/ — typecheck (app + functions), vite build, SEO prerender (~2160 pages, sitemap, robots)
 npm run preview      # serves dist/ like Cloudflare Pages → http://localhost:4173 (static only)
 npm run preview:full # dist/ + functions + D1 exactly like Pages → http://localhost:8788
 npm run typecheck
@@ -112,7 +112,8 @@ Main goals (in priority order):
 3. **Hero pages** — what every ability does (description, cooldowns, T1/T2/T3 upgrades), popular skill order, core items, matchups, base stats, lore.
 4. Item stats (shop view + table + a page per item), a global build browser, match pages, patch impact
    and the ranked leaderboard.
-5. Player tools: **draft helper** (counter-pick / complete the team / team vs team + what to build),
+5. Player tools: **draft helper** (one board: enemies, you, teammates → best pick for your slot, answers to each
+   enemy, what to avoid, then your matchup + items vs the lineup), **counter pages** per hero (`/counters/:slug`),
    **accounts** (Steam OpenID or username + e-mail + password, no e-mail confirmation) with **favourite
    heroes and builds**, a **personal dashboard** (your WR per hero vs the average at your rank), **compare with
    a friend** and **match analysis** (your item timings vs top players on the same hero).
@@ -281,7 +282,9 @@ src/
                            (login/register/logout/unlinkSteam/deleteAccount), steamUrl(), own() fetch helper
     favorites.ts           useFavorites() (server when logged in, localStorage for guests), <FavoritesSync/>
     draft.ts               draft maths: pairIndex(), scoreHero()/rankPicks() (counter + synergy effects beyond the
-                           heroes' own strength), teamRoles() (missing position), itemsVsLineup()
+                           heroes' own strength), answersTo() (best answers to one enemy), countersOf() (counter page:
+                           counters + victims of one hero, MIN_PAIR_GAMES = 300), teamRoles() (missing position),
+                           itemsVsLineup()
     types.ts               API response types (only fields we use) + client fields Hero.slug / Hero.name_en
     filters.tsx            FilterProvider/useFilters: rank bracket + period, persisted in localStorage
     heroes.ts              slug, role keys, hero colours/images, abilities lookup, buildHeroRows(), assignTiers()
@@ -308,7 +311,7 @@ src/
     useStats.ts            analytics hooks (hero stats, item stats, counters, synergy, ability orders,
                            build stats, builds, steam profiles). All keyed by the global filters. Plus
                            useHeroStatsAtRank() (dashboard / analysis), useTopItemStats() (Ascendant+ item timings),
-                           useItemStatsVsEnemies() (draft)
+                           useItemStatsVsEnemies() (draft), useItemStatsVsEnemy() (counter page, all heroes)
     useHeroData.ts         derived data: useHeroMatchups(), useHeroItemRows(), useLaneAgg() (lanes + aggregates, header chip only)
     usePlayer.ts           player queries: steam search, match history, per-hero stats (one or several accounts,
                            optional period), rank, teammates
@@ -341,8 +344,9 @@ src/
     ItemTable.tsx          sortable/filterable item stats table (hero page + items page)
     Html.tsx               renders sanitized API HTML
   pages/
-    Home.tsx               banner + rotating hero Showcase, numbers strip, meta snapshot, hero grid,
-                           trending builds, patch list
+    Home.tsx               banner + rotating hero Showcase (swipe on phones), numbers strip, meta snapshot (a
+                           swipeable row on phones), DraftPromo (most picked heroes as an enemy lineup → /draft),
+                           hero grid, trending builds, patch list
     Heroes.tsx             meta table (sortable, position + class filters, Position column).
                            Exports ROLE_FILTERS, useRoleOptions(), heroMatches()
     TierList.tsx           S/A/B/C/D rows of HeroCards, position filter
@@ -372,8 +376,14 @@ src/
                            totals(), useRankName()
     Compare.tsx            /compare?a=&b=: two players side by side (CompareRow bars), games together,
                            heroes both play; friend picker = Steam search + the people you play with
-    Draft.tsx              /draft: modes counter / team / build, team boxes + hero pool, picks, team roles,
-                           items vs the lineup; state in the URL (?mode=&e=&a=&me=)
+    Draft.tsx              /draft: board (enemy 6 · "You" · 5 teammates) + hero pool (target switch, search + Enter),
+                           YourPick + BuildAdvice (items vs lineup, core items), Picks (top-3 Podium + list, sort win
+                           chance / counter effect, position filter), side panels TeamNeeds / Answers / Avoid /
+                           HowItWorks; state in the URL (?e=&a=&me=), old ?mode= links still open
+    About.tsx              /about: who makes the site (owner = Deadlock streamer BethakZS → TWITCH_URL), live numbers,
+                           three feature cards, data / Deadlock API partner card, ingest tool link
+    Counters.tsx           /counters (CountersIndexPage) and /counters/:slug (CountersPage): best counters, heroes it
+                           beats, items against it; exports CounterGuideGrid (also on /draft)
     NotFound.tsx
     hero/
       HeroPage.tsx         header (bg art, portrait, SVG name, stats) + sticky tabs; sets --hero colour on <html>
@@ -387,7 +397,8 @@ src/
     base.css               reset, film-grain + glow atmosphere, typography helpers, .container/.page
     components.css         component styles (BEM-ish: .block__elem, .is-state, .block--variant)
     pages.css              page layouts + responsive rules
-    features.css           accounts, favourites, dashboard, compare, match analysis, draft
+    features.css           accounts, favourites, dashboard, compare, match analysis
+    draft.css              draft helper + counter pages
 ```
 
 ### Routes
@@ -403,7 +414,10 @@ src/
 | `/items/:slug` | Item page. `slug` = `itemSlug(englishName)` (`mystic-burst`) in every language — `useShopItemSlugs()` loads the English upgrade names outside EN. Unknown slug → `/items` |
 | `/matches` | Match lookup by ID + my recent matches |
 | `/matches/:matchId` | Match page (SPA only, not prerendered — rewritten to `/app` like players). `?tab=stats|lanes|timeline|analysis` opens a tab |
-| `/draft` | Draft helper. `?mode=team|build`, `e=` enemy slugs, `a=` ally slugs, `me=` your hero (build mode). Prerendered (modes + every hero's best counters as text) |
+| `/draft` | Draft helper. `e=` enemy slugs (≤6), `a=` teammate slugs (≤5), `me=` your hero. Old `?mode=team|build` links still parse (build without `me` = first ally) and are rewritten on the first edit. Prerendered (how it works + every hero's best counters as text) |
+| `/counters` | Counter guides index (every hero → its counter page). Prerendered |
+| `/about` | About the site and the owner (streamer BethakZS, Twitch link), data source / partner. Linked from the footer ("Browse" column) and the site search ("about", "twitch", "bethakzs"). Prerendered with an `AboutPage` JSON-LD (author = BethakZS, `sameAs` Twitch) |
+| `/counters/:slug` | Who counters a hero: best counters (draft maths), heroes it beats, items against it, link into `/draft?e=slug`. Prerendered. Unknown slug → `/counters` |
 | `/compare` | Compare two players: `?a=` (default: me) `&b=` (SPA only) |
 | `/login` | Sign in with Steam / log in / sign up (`?mode=register`, `?next=/path`, `?steam=error`) (SPA only) |
 | `/account` | Account details, Steam link (`?steam=linked|taken|error` after the round trip), log out, delete (SPA only) |
@@ -422,13 +436,15 @@ language (top choice) is one we support — or with a saved choice — an Englis
 prefix; crawlers always get the URL they requested.
 
 ### SEO prerender (`scripts/prerender.ts`, runs in `npm run build`)
-Writes a static HTML file for every public route × language (≈386 routes × 5 ≈ 1930 pages: the old 226 + a page per shop item that has stats in the last 7 days (~156) +
-/patches + /leaderboard + /matches + /draft): own `<title>` /
+Writes a static HTML file for every public route × language (≈432 routes × 5 ≈ 2160 pages: the old 226 + a page per shop item that has stats in the last 7 days (~156) +
+/patches + /leaderboard + /matches + /draft + /counters + a counter page per hero (~44) + /about): own `<title>` /
 description (same `meta.*` dictionary keys as the runtime `useDocumentMeta()`), canonical + hreflang
-(en, uk, de, es, ru, x-default), Open Graph / Twitter tags (hero card art as image), JSON-LD on the home page, and a
+(en, uk, de, es, ru, x-default), Open Graph / Twitter tags (hero card art as image), JSON-LD on the home page (and any
+page with `jsonLd` in its `PageDef` — /about), and a
 static text version of the page inside `#root` (`.seo-static`: hero role, stats, abilities with T1–T3,
 top builds with IDs, counters, lore, hero links) that React replaces on mount. Data is fetched from the
-API at build time (hero-stats over 7 days, counters, top 5 builds per hero, item-stats overall + by hero,
+API at build time (hero-stats over 7 days, counters, top 5 builds per hero, item-stats overall + by hero + of every
+hero against each enemy (`enemy_hero_ids`, one call per hero, for the counter pages),
 latest patch impact, Europe leaderboard). Player and match pages are not
 prerendered. When adding a page or a hero tab: add its `meta.*` keys, call `useDocumentMeta()` in the
 page AND add it to `pages()` in the prerender script.
@@ -511,7 +527,7 @@ Description HTML contains `<span class="highlight">`, inline `<svg width="128">`
 | `GET /analytics/hero-build-stats/{hero_id}?min_matches=30` | `[{hero_build_id, wins, matches, players}]` — **real win rate per build**. Min timestamp March 1 2026. |
 | `GET /analytics/hero-stats?min_average_badge=81&max_average_badge=86` | Hero stats of matches at one rank tier (dashboard "average at your rank"; analysis uses `min_average_badge=101` = Ascendant+ for the hero's game count) |
 | `GET /analytics/item-stats?hero_id=&min_average_badge=101&min_matches=20` | Item stats of one hero in top matches — `avg_buy_time_s` = "when top players buy it" (match analysis) |
-| `GET /analytics/item-stats?hero_id=&enemy_hero_ids=E&min_matches=30` | Item stats of one hero in matches where E was an enemy ("what beats E"). Several ids = ANY of them (useless for a lineup), so the draft calls it once per enemy. ⚠ `bucket=enemy_hero` would do it in one call but is ~1.7 MB / 4.5 s — don't |
+| `GET /analytics/item-stats?hero_id=&enemy_hero_ids=E&min_matches=30` | Item stats of one hero in matches where E was an enemy ("what beats E"). Several ids = ANY of them (useless for a lineup), so the draft calls it once per enemy. Without `hero_id` = every hero's items vs E (~40 KB, 5–7 s cold) — the counter pages. ⚠ `bucket=enemy_hero` would do it in one call but is ~1.7 MB / 4.5 s — don't |
 
 ### Builds & players
 | Endpoint | Notes |
@@ -586,6 +602,14 @@ tab were built and then removed on request — don't bring them back unless aske
   to it. **Items vs a lineup**: per enemy, (item WR vs E − item WR overall) minus the match-weighted average of that
   shift over all items (the hero's own matchup), × n/(n+150), averaged over the enemies; items bought in < 3% of the
   hero's games are ignored. Same normalisation in the prerendered "counters" list on `/draft`.
+  **Draft page rules:** picks rank candidates for YOUR slot (enemies + teammates on the board, your own hero stays a
+  candidate so its rank shows: "#11 of 37"). The list jumps to the missing role only once ≥ 3 teammates are known.
+  "Avoid" = advantage < −0.4% AND expected < 50% (a strong hero with one bad matchup is not "avoid"). "Answers" =
+  top 3 candidates by effect vs each enemy (pairs with ≥ 300 games).
+* **Counter page** (`countersOf()`): every hero's effect vs this one enemy (same formula, ≥ 300 games); counters =
+  effect > 0 best first, victims = effect < 0. Rows show the raw pair WR, the **expected** WR (hero's WR − (enemy WR −
+  50%)) and the effect, so "43% vs Haze is still a counter" reads right. Items against a hero = `itemsVsLineup()`
+  with every hero's overall item stats as the base and `item-stats?enemy_hero_ids=E` as the one "enemy".
 * **Dashboard**: your WR per hero (selected period, `players/hero-stats`) minus the WR of everyone on that hero in
   matches of your rank tier (badge tier ×10 + 1…6, last 30 days). Strong / weak = top / bottom 3 by that difference
   among heroes with ≥ 5 games. Career numbers sum the per-hero rows; per-minute stats are weighted by time played.
@@ -681,8 +705,15 @@ Rules:
 * Favourites: `FavButton` — labelled pill first in the hero header tags row, icon-only before the chevron of a build card.
 * "Sign in with Steam" is a plain `<a>` (full navigation to Steam), styled `.steam-btn` (cool steel, not brass —
   it's Steam's button, not ours).
-* Draft: enemy team tinted with `--blood`, your team with the Archmother sapphire; the active box (where a click in the
-  hero pool goes) glows; it switches to the other team automatically when full. Pick list cards have no exit
+* Draft (rebuilt 16.11): board on the left (enemy row, "vs", your row whose first slot is **You** in brass), hero pool
+  on the right with a "Add to: Enemies / You / Teammates" switch; a full side hands the next click to the next one
+  (enemy → you → teammates). Search + Enter adds the first match. Pool heroes already on the board keep a dot in
+  their side's colour. Results: YourPick (portrait), top-3 podium cards with portrait art, then rows; side panels.
+  On phones: slots shrink to avatars (no names), the pool can be collapsed, the podium stacks.
+  **Draft URL updates read `window.location.search`, not the render's `params`** — the router commits location in a
+  transition (`v7_startTransition`), so fast clicks / typing would otherwise build on a stale URL and drop a hero.
+  Enemy team tinted with `--blood`, your team with the Archmother sapphire; the active box (where a click in the
+  hero pool goes) glows. Pick list cards have no exit
   animation on purpose (filter switches must be instant). Match analysis: you = cream dot, top players = brass
   hollow diamond, the gap between them coloured by the timing tone.
 * Hero header: the card portrait has its own painted backdrop, so `.hero-head__portrait img` feathers all four edges
@@ -691,6 +722,17 @@ Rules:
   into a hard-edged box.
 * Build cards: `.build-card__inner` uses `grid-template-columns: minmax(0, 1fr)` so the wide skill-order grid scrolls
   inside itself on phones instead of widening the card.
+* Home showcase: swipe left / right on phones (`onPanEnd`, `touch-action: pan-y` keeps vertical scrolling); any
+  manual change restarts the 6 s auto-advance; the dots are 34×24 tap targets with a 4px bar inside.
+* Home meta snapshot: three panels in a row on desktop; **below 720px a horizontal scroll-snap row** (86% wide
+  cards, peek of the next) instead of a ~1000px column (owner: "the top-5 cards don't swipe on mobile").
+* Home "Draft helper" teaser (`.draft-promo`) sits between the meta snapshot and the hero grid; the banner chips have
+  a "Draft helper" chip second. The header keeps the owner's 4 main tabs.
+* Footer: "Official partner of Deadlock API" brass plaque (`.partner-badge`) under the blurb, links to deadlock-api.com.
+  The "Browse" column ends with "About".
+* /about: banner-style two-line title (`about.title1/2`, same `.banner__line` reveal as home), the home `.numbers` strip,
+  three feature cards (brass 01–03), the stream card in **Twitch purple** (tokens `--twitch-rgb` / `--twitch-hi-rgb` —
+  Twitch's colour, used only there, like the Steam button's steel) and the data card with the partner plaque.
 * Numbers: `<CountUp>`; bars: animate `width` from 0.
 * `prefers-reduced-motion` is respected globally in `base.css`.
 * Note: when the preview browser pane is hidden, rAF is throttled and animations freeze mid-way (half-transparent text, partial count-ups). That's an artefact of the tool, not a bug.
@@ -737,8 +779,9 @@ Rules:
 * Match pages show what the metadata has; damage/healing come from the last stat snapshot. Ideas: objectives timeline,
   death map (`death_details`), per-player soul graph.
 * EN / UA / DE / ES / RU. The API supports more game languages (French, Polish, Chinese, Japanese…) — adding one is a dictionary + `LANGS` entry (+ fonts for non-Latin scripts).
-* Player data completeness depends on the Deadlock API: full live match history only for accounts that added
-  their bot on Steam; otherwise only matches it already ingested. Shown as a note on the player page.
+* Player data completeness depends on the Deadlock API: a match shows up only once someone sent it (match id + salt).
+  Their **ingest tool** (deadlock-api.com/ingest-cache) sends every match a player plays — the note on the player
+  page links there (the old "add the bot on Steam" advice is gone).
 * "It's me" (localStorage) still works for guests; a linked Steam account overrides it.
 * Accounts have no password reset (no e-mail sending yet — owner's choice: no confirmation). A user who forgets the
   password can still sign in with Steam if it is linked. Cloudflare Email Routing / a mail API would be needed for resets.
@@ -802,9 +845,12 @@ Rules:
 - `/builds` — браузер білдів (герой, сортування, пошук, фільтр за тегами, пагінація)
 - `/players`, `/players/:id` — пошук гравця і профіль (ранг, форма, матчі, герої, тімейти), кнопка «Це я»,
   «Порівняти зі мною»
-- `/draft` — **драфт-помічник**, три режими: «Контрпік» (головний: 6 ворогів → кого пікнути), «Доповнити команду»
-  (6 ворогів + 5 союзників → кого брати і якої ролі бракує), «Команда на команду» (6 на 6 + «Я» → мій матчап і
-  предмети проти цього складу + основні предмети). Драфт зберігається в URL — можна скинути другу
+- `/draft` — **драфт-помічник** (перероблено 16.11): одна дошка — 6 ворогів, слот «Ти» і 5 союзників; список героїв
+  поруч (пошук + Enter). Результати: топ-3 «подіум» з портретами, список, сортування «шанс перемоги / сила контрпіку»,
+  «відповідь на кожного ворога», «краще не брати», роль, якої бракує; коли поставиш свого героя — твій матчап (місце
+  серед усіх варіантів), предмети проти складу, основні предмети. Посилання з драфтом можна скопіювати
+- `/counters`, `/counters/:slug` — **сторінки контрпіків** для кожного героя («Хто контрить Haze»): найкращі контрпіки
+  (вінрейт проти, очікуваний, ефект), кого обігрує герой, предмети проти нього, кнопка «додати решту ворожої команди»
 - **Акаунти**: `/login` — вхід через Steam або логін/e-mail + пароль, реєстрація без підтвердження пошти;
   `/account` — підключити / відключити Steam, вийти, видалити акаунт. В шапці — кнопка «Увійти» або аватар з меню
 - **Обране**: зірочка на сторінці героя і на кожному білді; у гостя зберігається в браузері, після входу
@@ -816,7 +862,10 @@ Rules:
   Ascendant+ на тому ж герої, і ключові предмети, які ти пропустив
 - Глобальні фільтри: ранг і період. П'ять мов: EN (`/…`), UA (`/uk/…`), DE (`/de/…`), ES (`/es/…`), RU (`/ru/…`) —
   перемикач-глобус у шапці
-- SEO: ~1930 статичних сторінок (~386 маршрутів × 5 мов: + сторінки предметів зі статистикою, патчі, лідерборд, матчі,
+- Футер: «Офіційний партнер Deadlock API» (Deadbuff є серед сайтів-трекерів на deadlock-api.com), посилання «Про сайт»
+- `/about` — **про сайт**: «Від гравця — для гравців», живі цифри, що є на сайті, блок власника — **стрімер BethakZS** з
+  кнопкою Twitch (twitch.tv/bethakzs), звідки дані й партнерство з Deadlock API
+- SEO: ~2155 статичних сторінок (~431 маршрут × 5 мов: + сторінки предметів зі статистикою, патчі, лідерборд, матчі, контрпіки,
   драфт), sitemap, canonical/hreflang, OG
 
 **Бекенд** — Cloudflare Pages Functions у тому ж репо (папки `functions/` і `server/`), база — Cloudflare D1:
@@ -828,7 +877,7 @@ Rules:
 
 ## 2. Поточний стан
 
-> Оновлено 16.11.2026 (фікс індексації).
+> Оновлено 16.11.2026 (фікс індексації, драфт, контрпіки).
 
 | Що | Стан |
 |---|---|
@@ -839,7 +888,9 @@ Rules:
 | Google Search Console | ✅ Domain property `deadbuff.net` підтверджено (TXT у DNS). Sitemap: «Успішно», знайдено 452 сторінки |
 | Bing Webmaster Tools | ⏳ Власник робив імпорт з GSC; sitemap підтягнувся як 0 → треба вручну додати `https://deadbuff.net/sitemap.xml` |
 | Щоденне оновлення | ✅ GitHub Action `Daily rebuild` перевірено ручним запуском — успішно |
-| Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47, «Сторінка з переспрямуванням» 1. Знайдено причину: robots.txt блокував `/api/`, тож Google рендерив сторінки без даних (скелетон / помилка). Виправлено локально (`Allow: /api/dl/`), **чекає пушу** — розділ 6, п. 22 |
+| Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47, «Сторінка з переспрямуванням» 1. Причина: robots.txt блокував `/api/`, тож Google рендерив сторінки без даних. Фікс `Allow: /api/dl/` задеплоєно 16.11 (`1777df3`) — розділ 6, п. 22. Власнику: «Перевірити виправлення» в GSC |
+| Партнерство | ✅ Deadbuff — офіційний партнер Deadlock API (іконка серед трекерів на deadlock-api.com, поки без посилання) |
+| Деплой 16.11 | ✅ Запушено 16.11: новий драфт-помічник, сторінки `/counters`, блок драфту на головній, свайп вітрини й «Зрізу мети» на телефоні, партнер у футері, текст про ingest tool, сторінка `/about` зі стрімом власника. Збірка проходить (2160 сторінок), перевірено в браузері (EN/UA/DE, 375px) |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
 підробленої cookie, унікальність логіна без урахування регістру (і для кирилиці), проксі (повторний запит 0,8 с → 0,008 с),
@@ -929,6 +980,8 @@ Rules:
 - Статичний текст сторінки всередині `#root` (`.seo-static`) — React замінює його після завантаження
 - sitemap (1930 URL) і robots, сторінки віддають 200 навіть для Googlebot (перевірено 16.11: усі 1930 — 200)
 - robots.txt дозволяє `/api/dl/` — без цього Google рендерить сторінки без даних (розділ 6, п. 22). **Не прибирати**
+- Сторінки контрпіків `/counters/:slug` (44 герої × 5 мов) під запити «who counters haze», «haze counter deadlock»,
+  «контрпік Імла». Посилання на них — з драфту, з вкладки «Матчапи» героя, з головної
 
 **Цільові запити:** `haze deadlock build`, `deadlock tier list`, `deadlock builds`, `deadlock <hero> build`,
 `deadlock counters`, українські аналоги.
@@ -1046,7 +1099,22 @@ Rules:
     `Disallow: /api/`, тобто й проксі `/api/dl/`, а запасний шлях `api.deadlock-api.com` у своєму robots.txt
     забороняє всіх ботів. React стирає статичний текст, дані не вантажаться → Google бачив скелетон або «помилку
     завантаження» на всіх сторінках. Фікс: `Allow: /api/dl/` (довше правило перемагає `Disallow: /api/`), відповіді
-    проксі з `X-Robots-Tag: noindex`. Переспрямування (1) — це `http://` або `www.` → норма, нічого робити не треба
+    проксі з `X-Robots-Tag: noindex`. Переспрямування (1) — це `http://` або `www.` → норма, нічого робити не треба.
+    Запушено 16.11 (`1777df3`)
+23. **16.11 — партнерство й драфт.** Deadlock API додали Deadbuff до своїх сайтів-трекерів → у футері плашка
+    «Офіційний партнер Deadlock API». Запит власника: «знизу — що ми офіційний партнер; перероби драфт-пікер як вважаєш
+    кращим; додай сторінку й індексуй; на головній покажи, що є драфт-пікер; на мобілці не гортаються картки топ-5 героїв»:
+    - драфт перероблено повністю: замість трьох режимів — одна дошка (вороги · «Ти» · союзники) і результати, що
+      підлаштовуються самі. Подіум топ-3, «відповідь на кожного ворога», «краще не брати», сортування за шансом
+      перемоги або силою контрпіку, пошук + Enter, «скопіювати посилання». Старі посилання `?mode=` відкриваються
+    - нові сторінки `/counters` і `/counters/:slug` для пошуку («Who counters Haze»), у пререндері й sitemap
+    - головна: блок «Кого пікнути проти цього складу» (6 найпопулярніших героїв як ворожий склад → драфт), чип у банері
+    - мобілка: вітрину «#N у меті» можна гортати свайпом; три панелі «Зрізу мети» — горизонтальна стрічка зі свайпом
+    - текст на профілі гравця: замість «додай бота в Steam» — ingest tool (deadlock-api.com/ingest-cache)
+24. **16.11 — сторінка `/about`.** Запит: «коротко, але чітко й круто; я стрімер BethakZS, Twitch можна лишити».
+    Власник — **стрімер Deadlock BethakZS** (twitch.tv/bethakzs). На сторінці: заголовок «Від гравця — для гравців»,
+    цифри, три картки (чесні цифри · контрпіки й драфт · твої ігри), блок стрімера з кнопкою Twitch у фіолетовому
+    кольорі Twitch, блок «Звідки цифри» з плашкою партнера. Посилання — у футері й у пошуку («twitch», «about»)
 
 ---
 
@@ -1108,7 +1176,13 @@ nurse-harrow 10/3/5/0, baba 4/6/8/5.
    герої → «Обране»
 0a. **Відновлення пароля** немає (немає відправки пошти — власник не хотів підтвердження e-mail). Якщо потрібне —
    знадобиться поштовий сервіс (наприклад, Resend, безкоштовно до 3 тис. листів/міс) або Cloudflare Email Workers
-0b. Переклади нових текстів DE / ES / RU — підібрані вручну, варто глянути носіям: DE «Draft-Helfer», «Jäger»;
+0. ✅ Зміни 16.11 (драфт, контрпіки, головна, футер, `/about`) запушено. **Власнику:** глянути /draft, /counters/haze, /about на телефоні
+0a1. Перевірити, що посилання на Twitch правильне: **twitch.tv/bethakzs** (на `/about`, у `About.tsx` → `TWITCH_URL` і в
+   `scripts/prerender.ts`)
+0a2. Попросити Deadlock API зробити іконку Deadbuff на їхній головній **посиланням** на deadbuff.net (зараз це лише
+   картинка — для Google не рахується). Посилання з тематичного сайту — найцінніше для SEO нового домену
+0b. Переклади нових текстів DE / ES / RU — підібрані вручну, варто глянути носіям (16.11 додано ~60 рядків драфту
+   й контрпіків: DE «Wer kontert …», ES «Counters contra …», RU «Контрпики: …»): DE «Draft-Helfer», «Jäger»;
    ES «Asistente de draft», «Panel»; RU «Драфт-помощник»
 1. ✅ Запушено. **Що зробити власнику в Search Console:** «Перевірка URL» → `https://deadbuff.net/` → «Запит на
    індексування» (щоб швидше підхопилась іконка сайту й нові сторінки). Іконка в Google зʼявляється за кілька днів.
@@ -1223,7 +1297,13 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
 
 ### Далі
 - ~~Лідерборд по регіонах~~ — зроблено (локально)
-- ~~Драфт-помічник~~ — зроблено (три режими). Далі можна: бани, лайни в драфті, «чий пік наступний»
+- ~~Драфт-помічник~~ — перероблено 16.11 (одна дошка + сторінки `/counters`). Далі можна: бани, лайни в драфті,
+  «чий пік наступний», OG-картинка драфту для Discord
+- ~~Сторінка `/about`~~ — зроблено 16.11. Далі можна: статус «зараз у ефірі» (потрібен ключ Twitch API, лише на бекенді)
+- Щотижневий мета-звіт з постійною адресою (`/meta/2026-w47`): хто виріс / впав, нові контрпіки — готовий пост для Reddit
+- Discord-бот (`/deadbuff haze` → білд і контрпіки) на Cloudflare Worker — безкоштовно, той самий проксі
+- Рефакторинг: `Draft.tsx` (~800 рядків) розбити на `pages/draft/*`; словники (~650 ключів) — по файлах на розділ;
+  `@types/node` у devDependencies, щоб `scripts/` теж проходили typecheck
 - Сторінки «Haze vs Infernus» — тільки популярні пари (щоб не плодити порожніх сторінок)
 - Win rate предметів за часом покупки (прибирає перекіс на користь пізніх предметів)
 - Ще мови інтерфейсу (французька, польська, португальська…) — API віддає ігрову локалізацію, додати = словник +
@@ -1238,6 +1318,10 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
 - Профіль гравця рахує тільки звичайний режим (`game_mode = 1`); перемога = `match_result === player_team`
 - `/analytics/lane-matchup-stats` позначений в API як «subject to change» — якщо впаде, чіп лайну просто зникне
 - Старий хост `assets.deadlock-api.com` більше не резолвиться — ассети тільки з `/v1/assets/*`
+- Матч з'являється в API (і на всіх трекерах), лише коли хтось його надіслав. Гравцям радимо ingest tool від Deadlock API
+  (deadlock-api.com/ingest-cache) — посилання в примітці на профілі гравця
+- «Найкращий контрпік» може мати вінрейт < 50% проти героя: контрпік = ефект понад власну силу обох героїв. Тому в рядку
+  є «очікувано» (вінрейт героя з поправкою на силу ворога) — різниця між ним і фактичним і є ефектом
 - Пререндерні цифри — знімок на момент білду (раз на добу); React одразу підтягує живі дані
 - Google індексує **відрендерену** сторінку (після JS), а не статичний текст. Якщо дані не вантажаться (robots.txt,
   ліміт функцій) — Google бачить скелетон. Перевірка: Search Console → Перевірка URL → «Перевірити URL у реальному часі»
@@ -1267,3 +1351,7 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   і Частину I (§1–11)
 - **16.11.2026** — розбір звіту Search Console про неіндексовані сторінки, фікс robots.txt для `/api/dl/` (розділ 6, п. 22);
   оновлено розділи 2, 5, 12 і Частину I (SEO prerender)
+- **16.11.2026 (друга частина)** — партнерство з Deadlock API, новий драфт-помічник, сторінки контрпіків, блок драфту на
+  головній, свайпи на мобілці, ingest tool (розділ 6, п. 23); оновлено розділи 1, 2, 5, 9, 12 і Частину I (§1, §4, §6–8, §10)
+- **16.11.2026 (третя частина)** — сторінка `/about` зі стрімером BethakZS (розділ 6, п. 24); оновлено розділи 1, 2, 9, 11 і
+  Частину I (§3, §4, §8)

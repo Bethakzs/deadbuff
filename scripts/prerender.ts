@@ -28,6 +28,7 @@ import { LANGS, pathForLang, type Lang } from '../src/i18n/types';
 import { uk } from '../src/i18n/uk';
 import { buildHeroRows, heroSlug, roleOf, type HeroRow, type Tier } from '../src/lib/heroes';
 import { loreParagraphs, stripHtml } from '../src/lib/html';
+import { countersOf, itemsVsLineup, pairIndex } from '../src/lib/draft';
 import { abilityDescription, isShopItem, itemSlug } from '../src/lib/items';
 import { patchImpact, patchTimeline, patchWindows, type PatchImpactRow, type PatchPoint } from '../src/lib/patches';
 import type { CounterStat, Hero, HeroBuild, HeroStat, Item, ItemBucketStat, ItemStat, LeaderboardEntry, Patch } from '../src/lib/types';
@@ -106,6 +107,8 @@ interface Data {
   shopEn: { item: Item; slug: string }[];
   itemStats: Map<number, ItemStat>;
   itemByHero: ItemBucketStat[];
+  /** item stats of every hero in games where this hero was an enemy (counter pages: "items against Haze") */
+  itemsVs: Map<number, ItemStat[]>;
   /** newest patch with at least a day of data after it, and its per-hero impact */
   patch?: { point: PatchPoint; rows: PatchImpactRow[] };
   leaderboard: LeaderboardEntry[];
@@ -151,9 +154,14 @@ async function loadData(): Promise<Data> {
     .map((h) => ({ ...h, name_en: h.name, slug: heroSlug(h.name) }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const builds = new Map<number, HeroBuild[]>();
+  const itemsVs = new Map<number, ItemStat[]>();
   await pool(heroes, 6, async (h) => {
-    const list = await get<HeroBuild[]>('/builds', { hero_id: h.id, sort_by: 'weekly_favorites', sort_direction: 'desc', only_latest: true, limit: 5 }).catch(() => []);
+    const [list, vs] = await Promise.all([
+      get<HeroBuild[]>('/builds', { hero_id: h.id, sort_by: 'weekly_favorites', sort_direction: 'desc', only_latest: true, limit: 5 }).catch(() => []),
+      get<ItemStat[]>('/analytics/item-stats', { min_unix_timestamp: since, min_matches: 30, enemy_hero_ids: h.id }).catch(() => [] as ItemStat[]),
+    ]);
     builds.set(h.id, list);
+    itemsVs.set(h.id, vs);
   });
   // Patch impact for the newest patch that already has a day of data after it.
   let patch: Data['patch'];
@@ -175,6 +183,7 @@ async function loadData(): Promise<Data> {
     shopEn: shop(raw.en.items).map((item) => ({ item, slug: itemSlug(item.name) })),
     itemStats: new Map(itemStats.map((x) => [x.item_id, x])),
     itemByHero,
+    itemsVs,
     patch,
     leaderboard,
   };
@@ -189,6 +198,8 @@ interface PageDef {
   description: (lang: Lang) => string;
   body: (lang: Lang) => string;
   image?: string;
+  /** structured data for this page (needs SITE_URL; the home page has its own WebSite block) */
+  jsonLd?: (lang: Lang, url: string) => Record<string, unknown>;
 }
 
 function heroText(d: Data, hero: Hero, lang: Lang) {
@@ -202,7 +213,7 @@ function heroText(d: Data, hero: Hero, lang: Lang) {
 }
 
 function navBlock(lang: Lang) {
-  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/draft', t(lang, 'nav.draft'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
+  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/draft', t(lang, 'nav.draft'))}${link(lang, '/counters', t(lang, 'ctr.eyebrow'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
 }
 
 function heroLinks(d: Data, lang: Lang, rows = d.rows) {
@@ -211,22 +222,21 @@ function heroLinks(d: Data, lang: Lang, rows = d.rows) {
     .join('')}</ul>`;
 }
 
-/** "Haze — Abrams +2.1%, Lash +1.8%…": the heroes that beat each hero most (vs their own usual win rate). */
-function counterLines(d: Data, lang: Lang) {
-  const base = new Map(d.rows.map((r) => [r.hero.id, r.winRate]));
-  const byId = new Map(d.heroes.map((h) => [h.id, h]));
+/** Every hero scored against one enemy — the same maths as the app (lib/draft.ts countersOf), per enemy. */
+function counterData(d: Data) {
+  const baseWr = new Map(d.rows.map((r) => [r.hero.id, r.winRate]));
+  const idx = pairIndex(d.counters);
+  return new Map(d.heroes.map((h) => [h.id, countersOf(h, d.heroes, baseWr, idx)]));
+}
+
+/** "Haze counters — Abrams +2.1%, Lash +1.8%…": the heroes that beat each hero most, each linking to its counter page. */
+function counterLines(d: Data, lang: Lang, ctr: ReturnType<typeof counterData>) {
   return d.heroes
     .map((enemy) => {
-      const best = d.counters
-        .filter((c) => c.enemy_hero_id === enemy.id && c.matches_played >= 300 && base.has(c.hero_id) && byId.has(c.hero_id))
-        // same "beyond the heroes' own strength" effect as the draft helper (lib/draft.ts)
-        .map((c) => ({ hero: byId.get(c.hero_id)!, delta: c.wins / c.matches_played - base.get(c.hero_id)! + ((base.get(enemy.id) ?? 0.5) - 0.5) }))
-        .filter((x) => x.delta > 0)
-        .sort((a, b) => b.delta - a.delta)
-        .slice(0, 4);
+      const best = (ctr.get(enemy.id)?.counters ?? []).slice(0, 4);
       if (!best.length) return '';
-      const list = best.map((x) => `${esc(heroText(d, x.hero, lang).name)} +${pct(lang, x.delta)}`).join(', ');
-      return `<li>${link(lang, `/heroes/${enemy.slug}/matchups`, heroText(d, enemy, lang).name)} — ${list}</li>`;
+      const list = best.map((x) => `${esc(heroText(d, x.hero, lang).name)} +${pct(lang, x.fx.delta)}`).join(', ');
+      return `<li>${link(lang, `/counters/${enemy.slug}`, t(lang, 'ctr.linkName', { name: heroText(d, enemy, lang).name }))} — ${list}</li>`;
     })
     .join('');
 }
@@ -248,6 +258,7 @@ function pages(d: Data): PageDef[] {
   const playerMatches = d.stats.reduce((a, s) => a + s.matches, 0) || 1;
   const heroStat = new Map(d.stats.map((s) => [s.hero_id, s]));
   const fallbackImage = byWr[0]?.hero.images.icon_hero_card;
+  const ctr = counterData(d);
   const list: PageDef[] = [
     {
       path: '/',
@@ -356,13 +367,85 @@ function pages(d: Data): PageDef[] {
       description: (l) => t(l, 'meta.desc.draft'),
       image: fallbackImage,
       body: (l) => {
-        const modes = (['counter', 'team', 'build'] as const)
-          .map((m) => `<li><b>${esc(t(l, `draft.mode.${m}` as MsgKey))}</b> — ${esc(t(l, `draft.sub.${m}` as MsgKey))}</li>`)
-          .join('');
-        return `<h1>${esc(t(l, 'draft.title'))}</h1><p>${esc(t(l, 'meta.desc.draft'))}</p><ul>${modes}</ul>${navBlock(l)}<h2>${esc(t(l, 'hm.counters'))}</h2><ul>${counterLines(d, l)}</ul>`;
+        const steps = (['draft.step1', 'draft.step2', 'draft.step3'] as const).map((k) => `<li>${esc(t(l, k))}</li>`).join('');
+        return `<h1>${esc(t(l, 'draft.title'))}</h1><p>${esc(t(l, 'draft.sub'))}</p><h2>${esc(t(l, 'draft.howTitle'))}</h2><ol>${steps}</ol>${navBlock(l)}<h2>${esc(t(l, 'draft.counterPages'))}</h2><ul>${counterLines(d, l, ctr)}</ul>`;
       },
     },
+    {
+      // who makes the site (the owner is the Deadlock streamer BethakZS) and where the data comes from
+      path: '/about',
+      title: (l) => t(l, 'meta.about'),
+      description: (l) => t(l, 'meta.desc.about'),
+      image: fallbackImage,
+      body: (l) =>
+        `<h1>${esc(`${t(l, 'about.title1')} ${t(l, 'about.title2')}`)}</h1><p>${esc(t(l, 'about.lead'))}</p>${navBlock(l)}` +
+        `<h2>${esc(t(l, 'about.what'))}</h2><ul>${(['f1', 'f2', 'f3'] as const)
+          .map((f) => `<li><b>${esc(t(l, `about.${f}.t` as MsgKey))}</b> — ${esc(t(l, `about.${f}.d` as MsgKey))}</li>`)
+          .join('')}</ul>` +
+        `<h2>${esc(t(l, 'about.who'))}</h2><p>${esc(t(l, 'about.whoText', { name: 'BethakZS' }))}</p><p><a href="https://www.twitch.tv/bethakzs">${esc(t(l, 'about.twitch'))}</a></p>` +
+        `<h2>${esc(t(l, 'about.data'))}</h2><p>${esc(t(l, 'about.dataText'))}</p><p><a href="https://deadlock-api.com">Deadlock API</a> · <a href="https://deadlock-api.com/ingest-cache">${esc(t(l, 'about.ingest'))}</a></p>`,
+      jsonLd: (l, url) => ({
+        '@context': 'https://schema.org',
+        '@type': 'AboutPage',
+        name: t(l, 'meta.about'),
+        url,
+        inLanguage: LANGS.find((x) => x.id === l)!.locale,
+        about: { '@type': 'WebSite', name: 'Deadbuff', url: `${SITE_URL}/` },
+        author: { '@type': 'Person', name: 'BethakZS', url: 'https://www.twitch.tv/bethakzs', sameAs: ['https://www.twitch.tv/bethakzs'] },
+      }),
+    },
+    {
+      // counter guides index: every hero with its top counters
+      path: '/counters',
+      title: (l) => t(l, 'meta.countersIndex'),
+      description: (l) => t(l, 'meta.desc.countersIndex'),
+      image: fallbackImage,
+      body: (l) =>
+        `<h1>${esc(t(l, 'ctr.indexTitle'))}</h1><p>${esc(t(l, 'ctr.indexSub'))}</p>${navBlock(l)}<p>${link(l, '/draft', t(l, 'home.draftCta'))}</p><ul>${counterLines(d, l, ctr)}</ul>`,
+    },
   ];
+
+  // one counter page per hero: who beats it (draft maths), whom it beats, items that work against it
+  const itemSlugOf = new Map(d.shopEn.map((x) => [x.item.id, x.slug]));
+  const baseItems = [...d.itemStats.values()];
+  for (const hero of d.heroes) {
+    const res = ctr.get(hero.id) ?? { counters: [], victims: [] };
+    const row = d.rows.find((r) => r.hero.id === hero.id);
+    const items = itemsVsLineup(baseItems, [{ enemyId: hero.id, stats: d.itemsVs.get(hero.id) ?? [] }], (id) => itemSlugOf.has(id))
+      .filter((x) => x.score > 0.002)
+      .slice(0, 8);
+    const nameIn = (l: Lang) => heroText(d, hero, l).name;
+    const itemName = (l: Lang, id: number) => {
+      const en = d.shopEn.find((x) => x.item.id === id)?.item;
+      return en ? (d.local[l].items.get(en.class_name)?.name ?? en.name) : '';
+    };
+    list.push({
+      path: `/counters/${hero.slug}`,
+      title: (l) => t(l, 'meta.counters', { name: nameIn(l), en: hero.name }),
+      description: (l) => t(l, 'meta.desc.counters', { name: nameIn(l), en: hero.name }),
+      image: hero.images.icon_hero_card ?? fallbackImage,
+      body: (l) => {
+        const name = nameIn(l);
+        const heroLi = (x: { hero: Hero; base: number; fx: { wr: number; delta: number; matches: number } }) =>
+          `<li>${link(l, `/heroes/${x.hero.slug}`, heroText(d, x.hero, l).name)} — ${esc(t(l, 'ctr.vsName', { name }))} ${pct(l, x.fx.wr)} · ${esc(t(l, 'ctr.usual'))} ${pct(l, x.base - ((row?.winRate ?? 0.5) - 0.5))} · ${esc(t(l, 'ctr.effect'))} ${x.fx.delta >= 0 ? '+' : '−'}${pct(l, Math.abs(x.fx.delta))} · ${x.fx.matches} ${esc(t(l, 'ctr.games'))}</li>`;
+        return (
+          `<h1>${esc(t(l, 'ctr.title', { name }))}</h1><p>${esc(t(l, 'ctr.sub', { name }))}</p>` +
+          (row ? `<p>${esc(t(l, 'stat.winRate'))} ${pct(l, row.winRate)} · ${esc(t(l, 'stat.pickRate'))} ${pct(l, row.pickRate)}</p>` : '') +
+          `${navBlock(l)}<p>${link(l, `/draft?e=${hero.slug}`, t(l, 'ctr.openDraft'))} · ${link(l, `/heroes/${hero.slug}`, t(l, 'ctr.heroPage', { name }))}</p>` +
+          `<h2>${esc(t(l, 'ctr.best'))}</h2><ol>${res.counters.slice(0, 10).map(heroLi).join('')}</ol>` +
+          (res.victims.length ? `<h2>${esc(t(l, 'ctr.strongVs', { name }))}</h2><ul>${res.victims.slice(0, 6).map(heroLi).join('')}</ul>` : '') +
+          (items.length
+            ? `<h2>${esc(t(l, 'ctr.items', { name }))}</h2><ul>${items
+                .map((x) => `<li>${link(l, `/items/${itemSlugOf.get(x.itemId)}`, itemName(l, x.itemId))} +${pct(l, x.score)}</li>`)
+                .join('')}</ul>`
+            : '') +
+          `<h2>${esc(t(l, 'ctr.others'))}</h2><ul>${d.heroes
+            .map((h) => `<li>${link(l, `/counters/${h.slug}`, t(l, 'ctr.linkName', { name: heroText(d, h, l).name }))}</li>`)
+            .join('')}</ul>`
+        );
+      },
+    });
+  }
 
   // one page per shop item (English slug in every language)
   for (const { item, slug } of listed) {
@@ -556,6 +639,9 @@ function render(template: string, page: PageDef, lang: Lang) {
         description,
       }).replace(/</g, '\\u003c')}</script>`,
     );
+  }
+  if (page.jsonLd && SITE_URL) {
+    head.push(`<script type="application/ld+json">${JSON.stringify(page.jsonLd(lang, abs(url))).replace(/</g, '\\u003c')}</script>`);
   }
   return template
     .replace(/<html lang="[^"]*">/, `<html lang="${meta.locale}">`)

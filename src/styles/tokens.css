@@ -59,6 +59,10 @@
   --team0-rgb: 232 160 72;
   --team1-rgb: 104 152 232;
 
+  /* Twitch purple — only for the owner's stream link on /about (it's Twitch's colour, like the Steam button) */
+  --twitch-rgb: 145 70 255;
+  --twitch-hi-rgb: 191 148 255;
+
   /* per-hero accent; overridden inline on hero pages / cards */
   --hero: 217 169 91;
 

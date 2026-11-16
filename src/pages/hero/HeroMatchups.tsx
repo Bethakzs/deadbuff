@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { HeroChip } from '../../components/HeroChip';
 import { Empty, ErrorState, Panel, SectionTitle, Segmented, SkeletonRows } from '../../components/UI';
 import { Delta, WinRate, WinRateBar } from '../../components/WinRate';
@@ -69,7 +70,10 @@ export function HeroMatchups({ hero }: { hero: Hero }) {
         }
       />
       <p className="muted section-blurb">
-        {rich(view === 'vs' ? 'hm.blurbVs' : 'hm.blurbWith', { name: hero.name, pct: <b className="num">{fmtPct(m.base)}</b> })}
+        {rich(view === 'vs' ? 'hm.blurbVs' : 'hm.blurbWith', { name: hero.name, pct: <b className="num">{fmtPct(m.base)}</b> })}{' '}
+        <Link className="link-more" to={`/counters/${hero.slug}`}>
+          {t('ctr.fullGuide', { name: hero.name })}
+        </Link>
       </p>
       {m.error ? (
         <ErrorState error={m.error} />

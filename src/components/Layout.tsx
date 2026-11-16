@@ -7,6 +7,7 @@ import { useAuth, useAuthActions } from '../lib/auth';
 import { FavoritesSync } from '../lib/favorites';
 import { useMe } from '../lib/me';
 import { SiteSearch } from './SiteSearch';
+import { Diamond } from './UI';
 
 type NavItem = { to: string; key: MsgKey };
 
@@ -366,6 +367,14 @@ function Footer() {
         <div>
           <Logo />
           <p className="muted site-footer__blurb">{t('footer.blurb')}</p>
+          {/* Deadbuff is listed among the tracker sites on deadlock-api.com (owner, 16.11.2026) */}
+          <a className="partner-badge" href="https://deadlock-api.com" target="_blank" rel="noopener">
+            <Diamond />
+            <span>
+              <small>{t('footer.partnerOf')}</small>
+              <b>Deadlock API</b>
+            </span>
+          </a>
         </div>
         <div className="site-footer__cols">
           <div>
@@ -375,6 +384,7 @@ function Footer() {
                 {t(n.key)}
               </Link>
             ))}
+            <Link to="/about">{t('nav.about')}</Link>
           </div>
           <div>
             <span className="eyebrow">{t('footer.data')}</span>

@@ -41,6 +41,8 @@ export interface PairEffect {
   hero: Hero;
   /** shrunk win-rate change for the candidate */
   delta: number;
+  /** raw win rate of the pair (candidate vs / with this hero), 0 without games */
+  wr: number;
   matches: number;
 }
 
@@ -59,10 +61,10 @@ export interface PickScore {
 /** `sign` −1 for an enemy (its strength lowers our chances), +1 for an ally. */
 function effect(map: PairIndex['vs'], heroId: number, other: Hero, base: number, otherBase: number | undefined, sign: 1 | -1): PairEffect {
   const s = map.get(`${heroId}:${other.id}`);
-  if (!s) return { hero: other, delta: 0, matches: 0 };
+  if (!s) return { hero: other, delta: 0, wr: 0, matches: 0 };
   const expected = base + sign * ((otherBase ?? 0.5) - 0.5);
-  const raw = s.wins / s.matches - expected;
-  return { hero: other, delta: raw * (s.matches / (s.matches + SHRINK)), matches: s.matches };
+  const wr = s.wins / s.matches;
+  return { hero: other, delta: (wr - expected) * (s.matches / (s.matches + SHRINK)), wr, matches: s.matches };
 }
 
 /** Score one hero against `enemies` alongside `allies`; `baseWr` = every hero's overall win rate. */
@@ -82,6 +84,30 @@ export function rankPicks(heroes: Hero[], baseWr: Map<number, number>, idx: Pair
     .filter((h) => !taken.has(h.id) && baseWr.has(h.id))
     .map((h) => scoreHero(h, baseWr, idx, enemies, allies))
     .sort((a, b) => b.expected - a.expected);
+}
+
+/** Pair effects with fewer games than this are too noisy to call a hero a counter. */
+export const MIN_PAIR_GAMES = 300;
+
+/**
+ * Best answers to one enemy: the candidates whose effect against it is the largest
+ * (the counter list of /counters/:slug and the "answers" block of the draft).
+ */
+export function answersTo(enemy: Hero, picks: PickScore[], n = 3): { hero: Hero; fx: PairEffect }[] {
+  return picks
+    .map((p) => ({ hero: p.hero, fx: p.vs.find((e) => e.hero.id === enemy.id) }))
+    .filter((x): x is { hero: Hero; fx: PairEffect } => !!x.fx && x.fx.matches >= MIN_PAIR_GAMES)
+    .sort((a, b) => b.fx.delta - a.fx.delta)
+    .slice(0, n);
+}
+
+/** Every hero scored against a single enemy — `counters` best first, `victims` (heroes it beats) worst first. */
+export function countersOf(enemy: Hero, heroes: Hero[], baseWr: Map<number, number>, idx: PairIndex) {
+  const scored = rankPicks(heroes, baseWr, idx, [enemy], [])
+    .map((p) => ({ hero: p.hero, base: p.base, fx: p.vs[0] }))
+    .filter((x) => x.fx.matches >= MIN_PAIR_GAMES)
+    .sort((a, b) => b.fx.delta - a.fx.delta);
+  return { counters: scored.filter((x) => x.fx.delta > 0), victims: scored.filter((x) => x.fx.delta < 0).reverse() };
 }
 
 /* ------------------------------ team roles ----------------------------- */

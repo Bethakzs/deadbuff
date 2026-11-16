@@ -10,6 +10,7 @@ import './styles/base.css';
 import './styles/components.css';
 import './styles/pages.css';
 import './styles/features.css';
+import './styles/draft.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {

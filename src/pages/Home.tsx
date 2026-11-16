@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { BuildCard } from '../components/BuildCard';
 import { FilterBar } from '../components/FilterBar';
 import { HeroCard } from '../components/HeroCard';
-import { HeroChip } from '../components/HeroChip';
+import { HeroAvatar, HeroChip } from '../components/HeroChip';
 import { SiteSearch } from '../components/SiteSearch';
 import { CountUp, Diamond, Empty, ErrorState, Page, Panel, SectionTitle, Segmented, Skeleton } from '../components/UI';
 import { MeterBar, WinRate, WinRateBar } from '../components/WinRate';
@@ -22,11 +22,13 @@ function Showcase({ rows }: { rows: HeroRow[] }) {
   const { t } = useT();
   const featured = useMemo(() => [...rows].sort((a, b) => b.score - a.score).slice(0, 5), [rows]);
   const [i, setI] = useState(0);
+  // auto-advance; any manual change (dot, swipe) restarts the 6 s wait
   useEffect(() => {
     if (featured.length < 2) return;
-    const timer = setInterval(() => setI((x) => (x + 1) % featured.length), 6000);
-    return () => clearInterval(timer);
-  }, [featured.length]);
+    const timer = setTimeout(() => setI((x) => (x + 1) % featured.length), 6000);
+    return () => clearTimeout(timer);
+  }, [featured.length, i]);
+  const step = (d: number) => setI((x) => (x + d + featured.length) % featured.length);
 
   const cur = featured[i];
   if (!cur)
@@ -40,7 +42,15 @@ function Showcase({ rows }: { rows: HeroRow[] }) {
   const useLogo = cur.hero.name === cur.hero.name_en && cur.hero.images.name_image;
 
   return (
-    <div className="showcase" style={{ ['--hero' as string]: heroRgb(cur.hero) }}>
+    // swipe left / right on phones (vertical drags still scroll the page: touch-action pan-y)
+    <motion.div
+      className="showcase"
+      style={{ ['--hero' as string]: heroRgb(cur.hero) }}
+      onPanEnd={(_, info) => {
+        const { x, y } = info.offset;
+        if (Math.abs(x) > 40 && Math.abs(x) > Math.abs(y) * 1.2) step(x < 0 ? 1 : -1);
+      }}
+    >
       <AnimatePresence mode="popLayout">
         <motion.img
           key={`bg-${cur.hero.id}`}
@@ -109,7 +119,7 @@ function Showcase({ rows }: { rows: HeroRow[] }) {
           </button>
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -139,6 +149,63 @@ function SnapshotList({ rows, metric }: { rows: HeroRow[]; metric: 'wr' | 'pick'
         </motion.li>
       ))}
     </ol>
+  );
+}
+
+/* ------------------------------ draft helper ----------------------------- */
+/** Teaser for /draft: the six most picked heroes as an enemy lineup → one click opens the draft with them. */
+function DraftPromo({ byPick }: { byPick: HeroRow[] }) {
+  const { t } = useT();
+  const lineup = byPick.slice(0, 6).map((r) => r.hero);
+  return (
+    <section className="draft-promo">
+      <div className="draft-promo__copy">
+        <span className="eyebrow">
+          <Diamond /> {t('home.draftEyebrow')}
+        </span>
+        <h2 className="display draft-promo__title">{t('home.draftTitle')}</h2>
+        <p className="draft-promo__lead">{t('home.draftLead')}</p>
+        <div className="draft-promo__cta">
+          <Link to="/draft" className="btn btn--brass">
+            {t('home.draftCta')}
+          </Link>
+          <Link to="/counters" className="link-more">
+            {t('ctr.allLink')}
+          </Link>
+        </div>
+      </div>
+      <div className="draft-promo__board">
+        <span className="draft-promo__label">{t('home.draftTry')}</span>
+        {lineup.length ? (
+          <Link to={`/draft?e=${lineup.map((h) => h.slug).join(',')}`} className="draft-promo__lineup" aria-label={t('home.draftCta')}>
+            <span className="draft-promo__enemies">
+              {lineup.map((h, n) => (
+                <motion.span
+                  key={h.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: n * 0.06, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <HeroAvatar hero={h} size={48} />
+                </motion.span>
+              ))}
+            </span>
+            <span className="draft-promo__vs display">vs</span>
+            <span className="draft-promo__you display">?</span>
+          </Link>
+        ) : (
+          <Skeleton h={64} r={12} />
+        )}
+        <div className="draft-promo__guides">
+          {lineup.slice(0, 4).map((h) => (
+            <Link key={h.id} to={`/counters/${h.slug}`} className="chip">
+              {t('ctr.linkName', { name: h.name })}
+            </Link>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -195,6 +262,9 @@ export function HomePage() {
               <div className="banner__quick">
                 <Link to="/tier-list" className="chip">
                   {t('home.chipTier')}
+                </Link>
+                <Link to="/draft" className="chip">
+                  {t('home.chipDraft')}
                 </Link>
                 <Link to="/heroes" className="chip">
                   {t('home.chipWr')}
@@ -257,6 +327,9 @@ export function HomePage() {
             </Panel>
           </div>
         )}
+
+        {/* ---------- draft helper teaser ---------- */}
+        {!error && <DraftPromo byPick={byPick} />}
 
         {/* ---------- hero grid ---------- */}
         <SectionTitle eyebrow={t('home.heroCount', { n: heroes.list.length })} title={t('home.pickHero')} />

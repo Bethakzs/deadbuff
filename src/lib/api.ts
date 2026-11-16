@@ -245,7 +245,8 @@ export const fetchTopItemStats = (heroId: number, minBadge: number, days: number
   get<ItemStat[]>('/analytics/item-stats', { hero_id: heroId, min_average_badge: minBadge, min_unix_timestamp: dayStart(days), min_matches: 20 }, signal);
 
 /** Item stats of one hero in matches where `enemyId` was on the other team ("what beats hero X"). */
-export const fetchItemStatsVsEnemy = (f: StatFilters, heroId: number, enemyId: number, signal?: AbortSignal) =>
+/** Item stats in games where `enemyId` was on the enemy team — of one hero, or of every hero when `heroId` is undefined. */
+export const fetchItemStatsVsEnemy = (f: StatFilters, heroId: number | undefined, enemyId: number, signal?: AbortSignal) =>
   get<ItemStat[]>('/analytics/item-stats', { ...filterParams(f), hero_id: heroId, enemy_hero_ids: enemyId, min_matches: 30 }, signal);
 
 export const fetchPlayerRank = (accountId: number, signal?: AbortSignal) =>
