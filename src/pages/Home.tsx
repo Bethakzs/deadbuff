@@ -9,6 +9,7 @@ import { SiteSearch } from '../components/SiteSearch';
 import { CountUp, Diamond, Empty, ErrorState, Page, Panel, SectionTitle, Segmented, Skeleton } from '../components/UI';
 import { MeterBar, WinRate, WinRateBar } from '../components/WinRate';
 import { useHeroes, useItems, usePatches } from '../hooks/useAssets';
+import { HIGH_PRIORITY, useMediaQuery } from '../hooks/useMediaQuery';
 import { useBuilds, useHeroRows, useSteamProfiles } from '../hooks/useStats';
 import { useT, type MsgKey } from '../i18n';
 import { useDocumentMeta } from '../lib/seo';
@@ -29,6 +30,9 @@ function Showcase({ rows }: { rows: HeroRow[] }) {
     return () => clearTimeout(timer);
   }, [featured.length, i]);
   const step = (d: number) => setI((x) => (x + d + featured.length) % featured.length);
+  // Phones skip the background art: 0.8–2 MB per hero, it was the slow LCP of the home page on mobile
+  // (Web Analytics, 16.11). The card gets a gradient in the hero's colour instead (.showcase--compact).
+  const compact = useMediaQuery('(max-width: 720px)');
 
   const cur = featured[i];
   if (!cur)
@@ -44,24 +48,28 @@ function Showcase({ rows }: { rows: HeroRow[] }) {
   return (
     // swipe left / right on phones (vertical drags still scroll the page: touch-action pan-y)
     <motion.div
-      className="showcase"
+      className={`showcase ${compact ? 'showcase--compact' : ''}`}
       style={{ ['--hero' as string]: heroRgb(cur.hero) }}
       onPanEnd={(_, info) => {
         const { x, y } = info.offset;
         if (Math.abs(x) > 40 && Math.abs(x) > Math.abs(y) * 1.2) step(x < 0 ? 1 : -1);
       }}
     >
-      <AnimatePresence mode="popLayout">
-        <motion.img
-          key={`bg-${cur.hero.id}`}
-          className="showcase__bg"
-          src={heroBg(cur.hero)}
-          alt=""
-          initial={{ opacity: 0, scale: 1.12 }}
-          animate={{ opacity: 1, scale: 1.02 }}
-          exit={{ opacity: 0 }}
-          transition={{ opacity: { duration: 0.9 }, scale: { duration: 7, ease: 'linear' } }}
-        />
+      {/* initial={false}: the first background paints at once (it is the LCP) — later heroes fade in */}
+      <AnimatePresence mode="popLayout" initial={false}>
+        {!compact && (
+          <motion.img
+            key={`bg-${cur.hero.id}`}
+            className="showcase__bg"
+            src={heroBg(cur.hero)}
+            alt=""
+            {...HIGH_PRIORITY}
+            initial={{ opacity: 0, scale: 1.12 }}
+            animate={{ opacity: 1, scale: 1.02 }}
+            exit={{ opacity: 0 }}
+            transition={{ opacity: { duration: 0.9 }, scale: { duration: 7, ease: 'linear' } }}
+          />
+        )}
       </AnimatePresence>
       <div className="showcase__shade" />
       <AnimatePresence mode="wait">

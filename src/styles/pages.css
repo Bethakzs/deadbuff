@@ -132,6 +132,31 @@
 .showcase--loading {
   border: 0;
 }
+/* Phones (< 720px, set in Home.tsx): no background art — 0.8–2 MB per hero made the home page's LCP slow on
+   mobile. The hero's colour paints the card instead, with the banner's deco sunburst on top. */
+.showcase--compact {
+  background:
+    radial-gradient(95% 70% at 22% 92%, rgb(var(--hero) / 0.62), transparent 65%),
+    radial-gradient(70% 55% at 100% 0%, rgb(var(--hero) / 0.3), transparent 70%),
+    radial-gradient(60% 45% at 85% 70%, rgb(217 169 91 / 0.1), transparent 70%),
+    #070605;
+}
+/* the card art has its own painted backdrop — without the background art its right edge would show */
+.showcase--compact .showcase__art {
+  -webkit-mask-image: linear-gradient(180deg, #000 75%, transparent), linear-gradient(90deg, #000 62%, transparent 96%);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(180deg, #000 75%, transparent), linear-gradient(90deg, #000 62%, transparent 96%);
+  mask-composite: intersect;
+}
+.showcase--compact::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-conic-gradient(from 200deg at 22% 100%, rgb(var(--hero) / 0.09) 0deg 1.2deg, transparent 1.2deg 9deg);
+  -webkit-mask-image: radial-gradient(closest-side at 30% 80%, #000, transparent);
+  mask-image: radial-gradient(closest-side at 30% 80%, #000, transparent);
+  pointer-events: none;
+}
 .showcase__bg {
   position: absolute;
   inset: 0;

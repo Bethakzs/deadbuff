@@ -7,6 +7,7 @@ import { PositionChips } from '../../components/Position';
 import { CountUp, ErrorState, Page, Skeleton, TierBadge } from '../../components/UI';
 import { useHeroes, useItems } from '../../hooks/useAssets';
 import { useLaneAgg } from '../../hooks/useHeroData';
+import { HIGH_PRIORITY } from '../../hooks/useMediaQuery';
 import { useHeroRows } from '../../hooks/useStats';
 import { bestLane, heroLaneProfile } from '../../lib/lanes';
 import { useT, type MsgKey } from '../../i18n';
@@ -42,6 +43,7 @@ function HeroHeader({ hero }: { hero: Hero }) {
         className="hero-head__bg"
         src={heroBg(hero)}
         alt=""
+        {...HIGH_PRIORITY}
         initial={{ opacity: 0, scale: 1.08 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}

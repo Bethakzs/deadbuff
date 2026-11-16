@@ -313,6 +313,7 @@ src/
                            useHeroStatsAtRank() (dashboard / analysis), useTopItemStats() (Ascendant+ item timings),
                            useItemStatsVsEnemies() (draft), useItemStatsVsEnemy() (counter page, all heroes)
     useHeroData.ts         derived data: useHeroMatchups(), useHeroItemRows(), useLaneAgg() (lanes + aggregates, header chip only)
+    useMediaQuery.ts       useMediaQuery('(max-width: 720px)') + HIGH_PRIORITY ({ fetchpriority: 'high' } for the LCP image)
     usePlayer.ts           player queries: steam search, match history, per-hero stats (one or several accounts,
                            optional period), rank, teammates
   components/
@@ -724,6 +725,11 @@ Rules:
   inside itself on phones instead of widening the card.
 * Home showcase: swipe left / right on phones (`onPanEnd`, `touch-action: pan-y` keeps vertical scrolling); any
   manual change restarts the 6 s auto-advance; the dots are 34×24 tap targets with a 4px bar inside.
+  **Speed (17.11):** hero background art is 0.8–1.7 MB per hero — a phone on the home page used to download ~4 MB in
+  the first seconds and the home page had the only "Poor" LCP in Web Analytics. Now **below 720px no background art
+  is loaded** (`.showcase--compact`: gradient in the hero colour + deco sunburst, the card art's right edge feathered);
+  on desktop the first background paints without the fade (`AnimatePresence initial={false}`) and carries
+  `fetchpriority="high"` (also the hero page header background). Don't bring the background back on phones.
 * Home meta snapshot: three panels in a row on desktop; **below 720px a horizontal scroll-snap row** (86% wide
   cards, peek of the next) instead of a ~1000px column (owner: "the top-5 cards don't swipe on mobile").
 * Home "Draft helper" teaser (`.draft-promo`) sits between the meta snapshot and the hero grid; the banner chips have
@@ -786,7 +792,9 @@ Rules:
 * Accounts have no password reset (no e-mail sending yet — owner's choice: no confirmation). A user who forgets the
   password can still sign in with Steam if it is linked. Cloudflare Email Routing / a mail API would be needed for resets.
 * The proxy's Cache API is per data centre and doesn't work on `*.pages.dev` — only on `deadbuff.net`.
-* Hero background images are big (~2 MB webp); consider `<link rel="preload">` for the hero page or a smaller crop.
+* Hero background images are big (0.8–1.7 MB webp, no smaller size in the API). The home showcase skips them on
+  phones; the hero page header still loads one (with `fetchpriority="high"`) — a smaller crop would need our own
+  image hosting / resizing (Cloudflare Images is paid).
 * Possible features: hero win rate trend (`hero-stats?bucket=start_time_day`), item purchase timing chart,
   patch-diff view, password reset, "log out everywhere" (needs a sessions table or a per-user session version).
 * Position ratings are hand-maintained (see §7) — the API has no role data. They need a review after big hero reworks.
@@ -890,6 +898,8 @@ Rules:
 | Щоденне оновлення | ✅ GitHub Action `Daily rebuild` перевірено ручним запуском — успішно |
 | Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47, «Сторінка з переспрямуванням» 1. Причина: robots.txt блокував `/api/`, тож Google рендерив сторінки без даних. Фікс `Allow: /api/dl/` задеплоєно 16.11 (`1777df3`) — розділ 6, п. 22. Власнику: «Перевірити виправлення» в GSC |
 | Партнерство | ✅ Deadbuff — офіційний партнер Deadlock API (іконка серед трекерів на deadlock-api.com, поки без посилання) |
+| Швидкість головної | ✅ 17.11: на телефонах вітрина без важкого фону (−4 МБ), запушено (розділ 6, п. 25) |
+| Аналітика | Cloudflare Web Analytics: **Workers & Pages → deadbuff → Metrics** (зняти фільтр «Site is in deadbuff.pages.dev», інакше видно лише pages.dev). За 13–16.11: 41 відвідування, 208 переглядів, топ — `/builds`, `/`, `/heroes` |
 | Деплой 16.11 | ✅ Запушено 16.11: новий драфт-помічник, сторінки `/counters`, блок драфту на головній, свайп вітрини й «Зрізу мети» на телефоні, партнер у футері, текст про ingest tool, сторінка `/about` зі стрімом власника. Збірка проходить (2160 сторінок), перевірено в браузері (EN/UA/DE, 375px) |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
@@ -1111,6 +1121,10 @@ Rules:
     - головна: блок «Кого пікнути проти цього складу» (6 найпопулярніших героїв як ворожий склад → драфт), чип у банері
     - мобілка: вітрину «#N у меті» можна гортати свайпом; три панелі «Зрізу мети» — горизонтальна стрічка зі свайпом
     - текст на профілі гравця: замість «додай бота в Steam» — ingest tool (deadlock-api.com/ingest-cache)
+25. **17.11 — швидкість головної.** Cloudflare Web Analytics: 41 відвідування / 208 переглядів за 7 днів, 95% Core Web
+    Vitals зелені, червоні лише на головній (`/`, `/uk`). Причина — фон вітрини «#N у меті» (0,8–1,7 МБ на героя):
+    телефон за перші секунди тягнув ~4 МБ. Тепер на телефонах фон не вантажиться (градієнт у кольорі героя), на
+    десктопі перший фон — без анімації й з пріоритетом. Власник погодив («так, прискор»)
 24. **16.11 — сторінка `/about`.** Запит: «коротко, але чітко й круто; я стрімер BethakZS, Twitch можна лишити».
     Власник — **стрімер Deadlock BethakZS** (twitch.tv/bethakzs). На сторінці: заголовок «Від гравця — для гравців»,
     цифри, три картки (чесні цифри · контрпіки й драфт · твої ігри), блок стрімера з кнопкою Twitch у фіолетовому
@@ -1355,3 +1369,5 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   головній, свайпи на мобілці, ingest tool (розділ 6, п. 23); оновлено розділи 1, 2, 5, 9, 12 і Частину I (§1, §4, §6–8, §10)
 - **16.11.2026 (третя частина)** — сторінка `/about` зі стрімером BethakZS (розділ 6, п. 24); оновлено розділи 1, 2, 9, 11 і
   Частину I (§3, §4, §8)
+- **17.11.2026** — розбір Web Analytics і GSC, швидкість головної на телефонах (розділ 6, п. 25); оновлено розділ 2 і
+  Частину I (§4, §8, §10)
