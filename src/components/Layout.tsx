@@ -6,6 +6,7 @@ import { LANGS, useT, type Lang, type MsgKey } from '../i18n';
 import { useAuth, useAuthActions } from '../lib/auth';
 import { FavoritesSync } from '../lib/favorites';
 import { useMe } from '../lib/me';
+import { ARTICLES, articlePath } from '../lib/wiki';
 import { SiteSearch } from './SiteSearch';
 import { Diamond } from './UI';
 
@@ -22,6 +23,7 @@ const NAV: NavItem[] = [
 /** Secondary sections behind the "three lines" menu at the end of the nav (owner's request). */
 const MORE: NavItem[] = [
   { to: '/draft', key: 'nav.draft' },
+  { to: '/wiki', key: 'nav.wiki' },
   { to: '/patches', key: 'nav.patches' },
   { to: '/players', key: 'nav.players' },
   { to: '/matches', key: 'nav.matches' },
@@ -387,6 +389,14 @@ function Footer() {
               </Link>
             ))}
             <Link to="/about">{t('nav.about')}</Link>
+          </div>
+          <div>
+            <span className="eyebrow">{t('nav.wiki')}</span>
+            {ARTICLES.map((a) => (
+              <Link key={a.id} to={articlePath(a)}>
+                {t(a.tab)}
+              </Link>
+            ))}
           </div>
           <div>
             <span className="eyebrow">{t('footer.data')}</span>

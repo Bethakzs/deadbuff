@@ -11,6 +11,7 @@ import './styles/components.css';
 import './styles/pages.css';
 import './styles/features.css';
 import './styles/draft.css';
+import './styles/wiki.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {

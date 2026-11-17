@@ -449,3 +449,88 @@ export interface LeaderboardEntry {
   top_hero_ids: number[];
   badge_level?: number;
 }
+
+/* -------------------------------- map -------------------------------- */
+
+/**
+ * One spot on the minimap. `left_relative` / `top_relative` are 0–1 over the minimap image
+ * (Hidden King base at the bottom); `position` is the world position (x, y, z).
+ */
+export interface MapSpot {
+  left_relative: number;
+  top_relative: number;
+  position?: number[];
+  kind?: string;
+  /** shops: 0 = Hidden King, 1 = Archmother, null = both */
+  team?: number | null;
+  /** teleporters / jump pads: where they send you (world x, y, z) */
+  target?: number[];
+}
+
+export interface MapCamp extends MapSpot {
+  /** "chinatown_bell_1", "slums_garage_down_camp"… — the prefix names the district */
+  name: string;
+  /** weak · medium · strong (neutral tiers I–III) · vault (Sinner's Sacrifice) */
+  kind: string;
+}
+
+/** A lane zipline: P0_points are offsets from `origin` in world units */
+export interface MapZipline {
+  origin: number[];
+  color: string;
+  P0_points: number[][];
+}
+
+/** /assets/map — minimap images, ziplines, neutral camps and everything else placed on the map */
+export interface GameMap {
+  /** world half-size: x, y run from −radius to +radius */
+  radius: number;
+  images: { minimap: string; mid_tunnels?: string };
+  neutral_camps: MapCamp[];
+  zipline_paths: MapZipline[];
+  entities: Partial<Record<string, MapSpot[]>>;
+}
+
+/** /assets/npc-units — only the fields the wiki reads (names come localised with `language`) */
+export interface NpcUnit {
+  class_name: string;
+  name?: string;
+  max_health?: number;
+  phase2_health?: number;
+  /** souls for the kill (neutrals, Sinner's Sacrifice) */
+  gold_reward?: number;
+  gold_reward_bonus_percent_per_minute?: number;
+  stomp_damage?: number;
+  stomp_damage_max_health_percent?: number;
+  stun_duration?: number;
+  objective_regen?: { subclass?: { out_of_combat_health_regen?: number; out_of_combat_regen_delay?: number } };
+  objective_health_growth_phase1?: { subclass?: { growth_per_minute?: number; growth_start_time_in_minutes?: number } };
+}
+
+/** /assets/generic-data — the parts the app reads (lanes everywhere; the rest on the wiki) */
+export interface GenericData {
+  lane_info: LaneInfo[];
+  /** localised place names: district (+ building) ids → names, e.g. York / Stock Exchange */
+  map_districts?: { district: string; district_name?: string; building?: string | null; building_name?: string | null }[];
+  /** item price by tier, index = tier (0 unused) */
+  item_price_per_tier?: number[];
+  /** share of a trooper's souls EACH hero gets, index = heroes nearby − 1 */
+  trooper_kill_gold_share_frac?: number[];
+  /** average share of a hero kill's souls per hero, index = heroes involved − 1 */
+  hero_kill_gold_share_frac?: number[];
+  objective_params?: {
+    near_player_split_pct?: number;
+    tier1_gold_kill?: number;
+    tier2_gold_kill?: number;
+    base_guardians_gold_kill?: number;
+    shrines_gold_kill?: number;
+  };
+  rejuv_params?: { rejuvinator_buff_duration?: number; trooper_health_mult?: number[]; player_respawn_mult?: number[] };
+}
+
+/** /analytics/badge-distribution row: players by the rank of their latest ranked match in the range */
+export interface BadgeRow {
+  badge_level: number;
+  total_matches: number;
+  unique_players: number;
+}

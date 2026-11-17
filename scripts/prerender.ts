@@ -31,7 +31,10 @@ import { loreParagraphs, stripHtml } from '../src/lib/html';
 import { countersOf, itemsVsLineup, pairIndex } from '../src/lib/draft';
 import { abilityDescription, isShopItem, itemSlug } from '../src/lib/items';
 import { patchImpact, patchTimeline, patchWindows, type PatchImpactRow, type PatchPoint } from '../src/lib/patches';
-import type { CounterStat, Hero, HeroBuild, HeroStat, Item, ItemBucketStat, ItemStat, LeaderboardEntry, Patch } from '../src/lib/types';
+import { lanesFromInfo } from '../src/lib/lanes';
+import { CAMP_KINDS, DISTRICTS, LANES, OBJECTIVES, TIMELINE, campCount, clock, districtName, midbossVars, placeName, wikiNumbers } from '../src/lib/map';
+import { ARTICLES, LEVEL_SOULS, UNLOCK_LEVELS, articlePath, resolveText, type Block, type WikiArticle, type WikiCtx } from '../src/lib/wiki';
+import type { BadgeRow, CounterStat, GameMap, GenericData, Hero, HeroBuild, HeroStat, Item, ItemBucketStat, ItemStat, LeaderboardEntry, NpcUnit, Patch, Rank } from '../src/lib/types';
 
 const API = 'https://api.deadlock-api.com/v1';
 const DIST = join(process.cwd(), 'dist');
@@ -94,6 +97,12 @@ interface Localised {
   heroes: Map<number, Hero>;
   items: Map<string, Item>;
   shop: Item[];
+  /** York, Broadway, Greenwich in this language (wiki) */
+  lanes: string[];
+  /** generic-data in this language (wiki: place names, prices, soul shares, Rejuvenator) */
+  generic?: GenericData;
+  /** rank names + badges in this language (wiki → ranks) */
+  ranks: Rank[];
 }
 
 interface Data {
@@ -112,20 +121,27 @@ interface Data {
   /** newest patch with at least a day of data after it, and its per-hero impact */
   patch?: { point: PatchPoint; rows: PatchImpactRow[] };
   leaderboard: LeaderboardEntry[];
+  /** wiki: everything on the map + NPC health / souls (English npc data — only numbers are used) */
+  map?: GameMap;
+  npcs: Map<string, NpcUnit>;
+  /** players by rank, last 30 days (wiki → ranks) */
+  badges: BadgeRow[];
 }
 
 async function loadData(): Promise<Data> {
   const hour = 3600;
   const since = Math.floor(Date.now() / 1000 / hour) * hour - 7 * 86400;
   const shop = (items: Item[]) => items.filter(isShopItem);
-  const [texts, stats, counters, itemStats, itemByHero, patches, bigDays, leaderboard] = await Promise.all([
+  const [texts, stats, counters, itemStats, itemByHero, patches, bigDays, leaderboard, map, npcs, badges] = await Promise.all([
     Promise.all(
       LANGS.map(async (l) => {
-        const [heroes, items] = await Promise.all([
+        const [heroes, items, generic, ranks] = await Promise.all([
           get<Hero[]>('/assets/heroes', { only_active: true, language: l.api }),
           get<Item[]>('/assets/items', { language: l.api }),
+          get<GenericData>('/assets/generic-data', { language: l.api }).catch(() => undefined),
+          get<Rank[]>('/assets/ranks', { language: l.api }).catch(() => [] as Rank[]),
         ]);
-        return [l.id, { heroesRaw: heroes, items }] as const;
+        return [l.id, { heroesRaw: heroes, items, generic, ranks, lanes: lanesFromInfo(generic?.lane_info).map((x) => x.name) }] as const;
       }),
     ),
     get<HeroStat[]>('/analytics/hero-stats', { min_unix_timestamp: since }),
@@ -137,8 +153,13 @@ async function loadData(): Promise<Data> {
     get<{ entries: LeaderboardEntry[] }>('/leaderboard/Europe')
       .then((r) => r.entries)
       .catch(() => [] as LeaderboardEntry[]),
+    get<GameMap>('/assets/map').catch(() => undefined),
+    get<NpcUnit[]>('/assets/npc-units').catch(() => [] as NpcUnit[]),
+    get<BadgeRow[]>('/analytics/badge-distribution', { min_unix_timestamp: Math.floor(Date.now() / 1000 / 86400) * 86400 - 30 * 86400 }).catch(
+      () => [] as BadgeRow[],
+    ),
   ]);
-  const raw = Object.fromEntries(texts) as Record<Lang, { heroesRaw: Hero[]; items: Item[] }>;
+  const raw = Object.fromEntries(texts) as Record<Lang, { heroesRaw: Hero[]; items: Item[]; lanes: string[]; generic?: GenericData; ranks: Rank[] }>;
   const local = Object.fromEntries(
     LANGS.map((l) => [
       l.id,
@@ -146,6 +167,9 @@ async function loadData(): Promise<Data> {
         heroes: new Map(raw[l.id].heroesRaw.map((h) => [h.id, h])),
         items: new Map(raw[l.id].items.map((i) => [i.class_name, i])),
         shop: shop(raw[l.id].items),
+        lanes: raw[l.id].lanes,
+        generic: raw[l.id].generic,
+        ranks: raw[l.id].ranks,
       },
     ]),
   ) as Record<Lang, Localised>;
@@ -186,6 +210,9 @@ async function loadData(): Promise<Data> {
     itemsVs,
     patch,
     leaderboard,
+    map,
+    npcs: new Map(npcs.map((n) => [n.class_name, n])),
+    badges,
   };
 }
 
@@ -213,7 +240,7 @@ function heroText(d: Data, hero: Hero, lang: Lang) {
 }
 
 function navBlock(lang: Lang) {
-  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/draft', t(lang, 'nav.draft'))}${link(lang, '/counters', t(lang, 'ctr.eyebrow'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
+  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/draft', t(lang, 'nav.draft'))}${link(lang, '/counters', t(lang, 'ctr.eyebrow'))}${link(lang, '/wiki', t(lang, 'nav.wiki'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
 }
 
 function heroLinks(d: Data, lang: Lang, rows = d.rows) {
@@ -248,6 +275,204 @@ function itemText(item: Item): string {
 }
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+
+/** Context for a declarative wiki article (lib/wiki.ts) in one language — the same texts the app renders. */
+function wikiCtx(d: Data, lang: Lang): WikiCtx {
+  const nf = (o: Intl.NumberFormatOptions) => new Intl.NumberFormat(LANGS.find((x) => x.id === lang)!.locale, o);
+  return {
+    t: (k, v) => t(lang, k, v),
+    d: { generic: d.local[lang].generic, npcs: d.npcs, map: d.map, shop: d.local[lang].shop },
+    f: {
+      int: (n) => nf({ maximumFractionDigits: 0 }).format(n),
+      pct: (r) => `${nf({ maximumFractionDigits: 0 }).format(r * 100)}%`,
+      flex: (n) => nf({ maximumFractionDigits: 2, useGrouping: false }).format(n),
+    },
+  };
+}
+
+function wikiBlockHtml(d: Data, lang: Lang, c: WikiCtx, b: Block): string {
+  const x = (v: Parameters<typeof resolveText>[1]) => esc(resolveText(c, v));
+  switch (b.k) {
+    case 'p':
+      return `<p>${x(b.text)}</p>`;
+    case 'cards':
+      return `<ul>${b.items.map((it) => `<li><b>${x(it.title)}</b>${it.tag ? ` (${x(it.tag)})` : ''} — ${x(it.text)}</li>`).join('')}</ul>`;
+    case 'table':
+      return `<table><tr>${b.head.map((h) => `<th>${esc(c.t(h))}</th>`).join('')}</tr>${b
+        .rows(c)
+        .map((r) => `<tr>${r.map((cell) => `<td>${esc(cell)}</td>`).join('')}</tr>`)
+        .join('')}</table>`;
+    case 'terms':
+      return `<dl>${b.items.map((it) => `<dt>${esc(c.t(it.term))}</dt><dd>${esc(c.t(it.text))}</dd>`).join('')}</dl>`;
+    case 'link':
+      return `<p>${link(lang, b.to, c.t(b.text))}</p>`;
+    case 'levels':
+      return `<table>${LEVEL_SOULS.map(
+        (souls, lvl) => `<tr><td>${esc(c.t('wiki.souls.lvl', { n: lvl }))}</td><td>${esc(c.f.int(souls))}</td><td>${esc(c.t(UNLOCK_LEVELS.has(lvl) ? 'wiki.souls.unlock' : 'wiki.souls.point'))}</td></tr>`,
+      ).join('')}</table>`;
+    case 'tiers': {
+      const prices = c.d.generic?.item_price_per_tier ?? [];
+      const roman = ['', 'I', 'II', 'III', 'IV'];
+      return `<ul>${[1, 2, 3, 4]
+        .map((tier) => {
+          const n = c.d.shop.filter((it) => it.item_tier === tier).length;
+          return `<li><b>${esc(c.t('item.tier', { roman: roman[tier] }))}</b> — ${prices[tier] !== undefined ? esc(c.f.int(prices[tier])) : ''} · ${esc(c.t('wiki.shop.items', { n }).replace('{n}', String(n)))}</li>`;
+        })
+        .join('')}</ul>`;
+    }
+    case 'ranks': {
+      const byTier = new Map<number, number>();
+      for (const r of d.badges) {
+        const tier = Math.floor(r.badge_level / 10);
+        if (tier >= 1) byTier.set(tier, (byTier.get(tier) ?? 0) + r.unique_players);
+      }
+      const total = [...byTier.values()].reduce((a, b) => a + b, 0);
+      const ranks = d.local[lang].ranks.filter((r) => r.tier >= 1).sort((a, b) => b.tier - a.tier);
+      return `<ol>${ranks
+        .map((r) => `<li><b>${esc(r.name)}</b>${total ? ` — ${esc(c.t('wiki.ranks.share', { pct: pct(lang, (byTier.get(r.tier) ?? 0) / total) }))}` : ''}</li>`)
+        .join('')}</ol>`;
+    }
+  }
+}
+
+/** Links to every wiki article (static pages link to each other, like the tabs on the page). */
+const wikiTabs = (lang: Lang) => `<ul>${ARTICLES.map((x) => `<li>${link(lang, articlePath(x), t(lang, x.tab))}</li>`).join('')}</ul>`;
+
+/**
+ * Structured data for a wiki page: an Article about Deadlock (author = the owner, BethakZS) + breadcrumbs
+ * Deadbuff › Wiki › article, and for the glossary the terms as a DefinedTermSet.
+ */
+function wikiJsonLd(a: WikiArticle, image?: string) {
+  const modified = new Date().toISOString().slice(0, 10);
+  return (lang: Lang, url: string): Record<string, unknown> => {
+    const abs = (path: string) => `${SITE_URL}${pathForLang(path, lang)}`;
+    const crumbs = [
+      { name: 'Deadbuff', item: abs('/') },
+      { name: t(lang, 'wiki.eyebrow'), item: abs('/wiki') },
+      ...(a.slug ? [{ name: t(lang, a.tab), item: url }] : []),
+    ];
+    const terms = a.sections.flatMap((s) => s.blocks.flatMap((b) => (b.k === 'terms' ? b.items : [])));
+    return {
+      '@context': 'https://schema.org',
+      '@graph': [
+        {
+          '@type': 'Article',
+          headline: headline(t(lang, a.meta)),
+          description: t(lang, a.metaDesc),
+          url,
+          mainEntityOfPage: url,
+          inLanguage: LANGS.find((x) => x.id === lang)!.locale,
+          dateModified: modified,
+          ...(image ? { image } : {}),
+          about: { '@type': 'VideoGame', name: 'Deadlock' },
+          author: { '@type': 'Person', name: 'BethakZS', url: 'https://www.twitch.tv/bethakzs' },
+          publisher: { '@type': 'Organization', name: 'Deadbuff', url: abs('/') },
+        },
+        {
+          '@type': 'BreadcrumbList',
+          itemListElement: crumbs.map((c, i) => ({ '@type': 'ListItem', position: i + 1, name: c.name, item: c.item })),
+        },
+        ...(terms.length
+          ? [
+              {
+                '@type': 'DefinedTermSet',
+                name: t(lang, a.title),
+                url,
+                hasDefinedTerm: terms.map((x) => ({ '@type': 'DefinedTerm', name: t(lang, x.term), description: t(lang, x.text) })),
+              },
+            ]
+          : []),
+      ],
+    };
+  };
+}
+
+/** A declarative wiki article as static text (React replaces it on mount). */
+function wikiArticleBody(d: Data, lang: Lang, a: WikiArticle) {
+  const c = wikiCtx(d, lang);
+  return (
+    `<h1>${esc(t(lang, 'wiki.eyebrow'))} — ${esc(t(lang, a.title))}</h1><p>${esc(t(lang, a.lead))}</p>${navBlock(lang)}${wikiTabs(lang)}` +
+    a.sections
+      .map(
+        (s) =>
+          `<h2 id="${s.id}">${esc(t(lang, s.title))}</h2>${s.sub ? `<p>${esc(resolveText(c, s.sub))}</p>` : ''}${s.blocks.map((b) => wikiBlockHtml(d, lang, c, b)).join('')}`,
+      )
+      .join('') +
+    `<p>${esc(t(lang, 'wiki.note'))}</p>`
+  );
+}
+
+/** /wiki as text: lanes, districts, objectives with health, the camp table, events, timings, getting around. */
+function wikiBody(d: Data, lang: Lang) {
+  const num = wikiNumbers(d.npcs);
+  const places = d.local[lang].generic?.map_districts;
+  const rejuv = midbossVars(d.local[lang].generic?.rejuv_params);
+  const pctOf = (r: number) => `${new Intl.NumberFormat(lang, { maximumFractionDigits: 0 }).format(r * 100)}%`;
+  const boss = rejuv ? t(lang, 'wiki.ev.midboss.d', { min: rejuv.min, hp: pctOf(rejuv.hp), resp: pctOf(rejuv.resp) }) : t(lang, 'wiki.ev.midboss.short');
+  const int = (n: number | undefined) => (n === undefined ? '—' : new Intl.NumberFormat(lang).format(n));
+  const team = (n: number) => t(lang, n ? 'match.team1' : 'match.team0');
+  const lanes = LANES.map(
+    (l, i) =>
+      `<li><b>${esc(d.local[lang].lanes[i] ?? '')}</b> (${esc(t(lang, l.side === 'mid' ? 'wiki.lane.mid' : 'wiki.lane.side'))}) — ${esc(t(lang, l.text))} · ${esc(l.spots.map((x) => placeName(x, places)).join(', '))} · ${esc(t(lang, 'wiki.lane.near'))}: ${esc(l.near.map((x) => districtName(x, places)).join(', '))}</li>`,
+  ).join('');
+  const districts = DISTRICTS.map((x) => `<li><b>${esc(districtName(x.id, places))}</b> (${esc(t(lang, 'wiki.side', { team: team(x.team) }))}) — ${esc(t(lang, x.text))}</li>`).join('');
+  const objText = (id: (typeof OBJECTIVES)[number]['id']) => {
+    if (id === 'walker' && num.walker) return t(lang, 'wiki.obj.walker.d', { dmg: num.walker.dmg, pct: num.walker.pct, stun: num.walker.stun });
+    const p = num.patron;
+    if (id === 'patron' && p?.hp2 && p.regen && p.delay && p.growth && p.from)
+      return t(lang, 'wiki.obj.patron.d', { hp: int(p.hp2), regen: p.regen, delay: p.delay, growth: p.growth, from: p.from });
+    return t(lang, (id === 'walker' ? 'wiki.obj.walker.short' : id === 'patron' ? 'wiki.obj.patron.short' : `wiki.obj.${id}.d`) as MsgKey);
+  };
+  const objectives = OBJECTIVES.map((o) => {
+    const hp = o.npc ? num.hp(o.npc) : undefined;
+    return `<li><b>${esc(t(lang, `wiki.obj.${o.id}` as MsgKey))}</b> — ${esc(t(lang, 'wiki.perTeam', { n: o.count }))}${hp ? `, ${esc(int(hp))} ${esc(t(lang, 'wiki.health'))}` : ''} · ${esc(objText(o.id))}</li>`;
+  }).join('');
+  const campName: Record<string, MsgKey> = { weak: 'wiki.neu.weak', medium: 'wiki.neu.medium', strong: 'wiki.neu.strong', vault: 'wiki.layer.sinners' };
+  const camps = CAMP_KINDS.map(
+    (c) =>
+      `<tr><td>${esc(t(lang, campName[c.kind]))}</td><td>${d.map ? campCount(d.map, c.kind) : '—'}</td><td>${esc(int(num.hp(c.npc)))}</td><td>${esc(int(num.souls(c.npc)))}</td><td>${clock(c.spawn)}</td><td>${clock(c.respawn)}</td></tr>`,
+  ).join('');
+  const head = (['wiki.neu.camp', 'wiki.neu.count', 'wiki.health', 'wiki.neu.souls', 'wiki.neu.spawn', 'wiki.neu.respawn'] as MsgKey[]).map((k) => `<th>${esc(t(lang, k))}</th>`).join('');
+  const events = (
+    [
+      ['wiki.ev.midboss', t(lang, 'wiki.ev.start'), boss],
+      ['wiki.layer.urn', clock(600), 'wiki.ev.urn.d'],
+      ['wiki.layer.rift', `≈ ${clock(660)}`, 'wiki.ev.rift.d'],
+      ['wiki.layer.bridge', t(lang, 'wiki.ev.every5'), 'wiki.ev.bridge.d'],
+      ['wiki.layer.snacks', clock(150), 'wiki.ev.snacks.d'],
+      ['wiki.ev.boxes', clock(180), 'wiki.ev.boxes.d'],
+      // the rest are dictionary keys
+    ] as [MsgKey, string, string][]
+  )
+    .map(([title, when, text]) => `<li><b>${esc(t(lang, title))}</b> (${esc(when)}) — ${esc(text.startsWith('wiki.') ? t(lang, text as MsgKey) : text)}</li>`)
+    .join('');
+  const timeline = TIMELINE.map((e) => `<li><b>${e.approx ? '≈ ' : ''}${clock(e.at)}</b> — ${esc(t(lang, e.text))}</li>`).join('');
+  const moving = (
+    [
+      ['wiki.map.lanes', 'wiki.move.zip'],
+      ['wiki.layer.teleporters', 'wiki.move.tp'],
+      ['wiki.layer.pads', 'wiki.move.pads'],
+      ['wiki.layer.ropes', 'wiki.move.ropes'],
+      ['wiki.layer.vents', 'wiki.move.vents'],
+      ['wiki.layer.veils', 'wiki.move.veils'],
+      ['wiki.move.secret', 'wiki.move.secret.d'],
+      ['wiki.move.fog', 'wiki.move.fog.d'],
+    ] as [MsgKey, MsgKey][]
+  )
+    .map(([title, text]) => `<li><b>${esc(t(lang, title))}</b> — ${esc(t(lang, text))}</li>`)
+    .join('');
+  return (
+    `<h1>${esc(t(lang, 'wiki.eyebrow'))} — ${esc(t(lang, 'wiki.title'))}</h1><p>${esc(t(lang, 'wiki.lead'))}</p>${navBlock(lang)}${wikiTabs(lang)}` +
+    `<h2 id="wiki-lanes">${esc(t(lang, 'wiki.lanes.title'))}</h2><p>${esc(t(lang, 'wiki.lanes.sub'))}</p><ul>${lanes}</ul>` +
+    `<h3>${esc(t(lang, 'wiki.districts.title'))}</h3><ul>${districts}</ul>` +
+    `<h2 id="wiki-objectives">${esc(t(lang, 'wiki.obj.title'))}</h2><p>${esc(t(lang, 'wiki.obj.sub'))}</p><ol>${objectives}</ol>` +
+    `<h2 id="wiki-neutrals">${esc(t(lang, 'wiki.neu.title'))}</h2><p>${esc(t(lang, 'wiki.neu.sub', { pct: num.soulGrowth ?? 1 }))}</p><table><tr>${head}</tr>${camps}</table>` +
+    `<h2 id="wiki-events">${esc(t(lang, 'wiki.ev.title'))}</h2><ul>${events}</ul>` +
+    `<h2 id="wiki-timings">${esc(t(lang, 'wiki.tl.title'))}</h2><ul>${timeline}</ul>` +
+    `<h2 id="wiki-moving">${esc(t(lang, 'wiki.move.title'))}</h2><ul>${moving}</ul>` +
+    `<p>${esc(t(lang, 'wiki.note'))}</p>`
+  );
+}
 
 function pages(d: Data): PageDef[] {
   const byWr = [...d.rows].sort((a, b) => b.winRate - a.winRate);
@@ -297,7 +522,7 @@ function pages(d: Data): PageDef[] {
       body: (l) => {
         const shop = d.local[l].shop.filter((i) => slugOf.has(i.id));
         return (
-          `<h1>${esc(t(l, 'items.title'))}</h1><p>${esc(t(l, 'items.sub'))}</p>${navBlock(l)}` +
+          `<h1>${esc(t(l, 'items.title'))}</h1><p>${esc(t(l, 'items.sub'))}</p><p>${link(l, '/wiki/shop', t(l, 'wiki.link.shop'))}</p>${navBlock(l)}` +
           (['weapon', 'vitality', 'spirit'] as const)
             .map(
               (slot) =>
@@ -348,7 +573,7 @@ function pages(d: Data): PageDef[] {
       description: (l) => t(l, 'meta.desc.leaderboard'),
       image: fallbackImage,
       body: (l) =>
-        `<h1>${esc(t(l, 'lb.title'))}</h1><p>${esc(t(l, 'lb.sub'))}</p>${navBlock(l)}<h2>${esc(t(l, 'lb.region.Europe'))}</h2><ol>${d.leaderboard
+        `<h1>${esc(t(l, 'lb.title'))}</h1><p>${esc(t(l, 'lb.sub'))}</p><p>${link(l, '/wiki/ranks', t(l, 'wiki.link.ranks'))}</p>${navBlock(l)}<h2>${esc(t(l, 'lb.region.Europe'))}</h2><ol>${d.leaderboard
           .slice(0, 50)
           .map((e) => `<li>${esc(e.account_name)}</li>`)
           .join('')}</ol>`,
@@ -394,6 +619,23 @@ function pages(d: Data): PageDef[] {
         author: { '@type': 'Person', name: 'BethakZS', url: 'https://www.twitch.tv/bethakzs', sameAs: ['https://www.twitch.tv/bethakzs'] },
       }),
     },
+    {
+      // wiki: the map — lanes, objectives with health, neutral camps, events and match timings
+      path: '/wiki',
+      title: (l) => t(l, 'meta.wiki'),
+      description: (l) => t(l, 'meta.desc.wiki'),
+      image: fallbackImage,
+      body: (l) => wikiBody(d, l),
+      jsonLd: wikiJsonLd(ARTICLES[0], fallbackImage),
+    },
+    ...ARTICLES.filter((a) => a.id !== 'map').map<PageDef>((a) => ({
+      path: articlePath(a),
+      title: (l) => t(l, a.meta),
+      description: (l) => t(l, a.metaDesc),
+      image: fallbackImage,
+      body: (l) => wikiArticleBody(d, l, a),
+      jsonLd: wikiJsonLd(a, fallbackImage),
+    })),
     {
       // counter guides index: every hero with its top counters
       path: '/counters',

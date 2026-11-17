@@ -5,7 +5,10 @@
 import type {
   AbilityOrderStat,
   BuildTag,
-  LaneInfo,
+  BadgeRow,
+  GameMap,
+  GenericData,
+  NpcUnit,
   LaneMatchupRow,
   MateStat,
   PlayerHeroStat,
@@ -128,9 +131,18 @@ export const fetchUpgradesEn = (signal?: AbortSignal) => get<Item[]>('/assets/it
 export const fetchBuildTags = (language: string, signal?: AbortSignal) =>
   get<BuildTag[]>('/assets/build-tags', { language }, signal);
 
-/** Only lane_info is used (lane names + colours). */
-export const fetchGenericData = (language: string, signal?: AbortSignal) =>
-  get<{ lane_info: LaneInfo[] }>('/assets/generic-data', { language }, signal);
+/** Lane names + colours everywhere; place names, prices, soul shares and Rejuvenator numbers on the wiki. */
+export const fetchGenericData = (language: string, signal?: AbortSignal) => get<GenericData>('/assets/generic-data', { language }, signal);
+
+/** Players by rank (latest ranked match since `since`) — wiki ranks page. */
+export const fetchBadgeDistribution = (since: number, signal?: AbortSignal) =>
+  get<BadgeRow[]>('/analytics/badge-distribution', { min_unix_timestamp: since }, signal);
+
+/** Minimap, ziplines, neutral camps, shops, teleporters… with positions (wiki map). ~110 KB, not localised. */
+export const fetchMap = (signal?: AbortSignal) => get<GameMap>('/assets/map', {}, signal);
+
+/** Troopers, objectives and neutrals: health, souls, Walker stomp… (wiki). Names come localised. */
+export const fetchNpcUnits = (language: string, signal?: AbortSignal) => get<NpcUnit[]>('/assets/npc-units', { language }, signal);
 
 /* ------------------------------ analytics --------------------------- */
 

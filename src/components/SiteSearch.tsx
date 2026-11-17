@@ -34,6 +34,16 @@ const PAGES: { to: string; key: MsgKey; extra: string[] }[] = [
   { to: '/me', key: 'nav.dashboard', extra: ['dashboard', 'my profile', 'my account', 'my stats', 'my statistics', 'me'] },
   { to: '/compare', key: 'nav.compare', extra: ['compare', 'vs friend', 'versus'] },
   { to: '/login', key: 'auth.login', extra: ['login', 'log in', 'sign in', 'register', 'sign up', 'steam'] },
+  {
+    to: '/wiki',
+    key: 'nav.wiki',
+    extra: ['wiki', 'map', 'guide', 'timings', 'objectives', 'camps', 'jungle', 'urn', 'soul urn', 'midboss', 'mid boss', 'rift', 'patron', 'guardian', 'walker', 'карта', 'karte', 'mapa'],
+  },
+  { to: '/wiki/souls', key: 'wiki.tab.souls', extra: ['souls', 'levels', 'level', 'boon', 'ability points', 'respawn', 'orbs', 'deny', 'душі', 'рівні', 'респавн'] },
+  { to: '/wiki/shop', key: 'wiki.tab.shop', extra: ['shop', 'flex slot', 'flex slots', 'item tiers', 'sell', 'prices', 'магазин', 'флекс'] },
+  { to: '/wiki/combat', key: 'wiki.tab.combat', extra: ['parry', 'stamina', 'movement', 'dash', 'dash jump', 'headshot', 'stun', 'cc', 'damage', 'melee'] },
+  { to: '/wiki/ranks', key: 'wiki.tab.ranks', extra: ['ranks', 'rank', 'rank distribution', 'eternus', 'ascendant', 'mmr', 'ранги'] },
+  { to: '/wiki/glossary', key: 'wiki.tab.glossary', extra: ['glossary', 'terms', 'slang', 'dictionary', 'словник'] },
   { to: '/about', key: 'nav.about', extra: ['about', 'twitch', 'stream', 'streamer', 'bethakzs', 'contact', 'deadbuff'] },
 ];
 

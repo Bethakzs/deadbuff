@@ -3,8 +3,9 @@
  *   1 York (yellow, left) · 4 Broadway (blue, middle) · 6 Greenwich (green, right)
  * ids/names/colours come from /assets/generic-data → lane_info[index].
  *
- * Only used for the small "Best lane: …" chip in the hero header (the owner
- * considers lane data secondary — keep it there, don't spread it around).
+ * Lane STATS are only used for the small "Best lane: …" chip in the hero header (the owner
+ * considers lane data secondary — keep it there, don't spread it around). The wiki (/wiki)
+ * only borrows the localised lane names and colours.
  * Source rows: /analytics/lane-matchup-stats grouped by (lane, duo).
  * ------------------------------------------------------------------ */
 import type { LaneInfo, LaneMatchupRow } from './types';

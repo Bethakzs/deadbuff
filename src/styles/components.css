@@ -574,7 +574,8 @@
 }
 .site-footer__cols {
   display: flex;
-  gap: 64px;
+  flex-wrap: wrap;
+  gap: 28px 64px;
 }
 .site-footer__cols div {
   display: flex;

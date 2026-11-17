@@ -1,7 +1,20 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { useT } from '../i18n';
-import { fetchBigPatchDays, fetchBuildTags, fetchGenericData, fetchHeroes, fetchItems, fetchPatches, fetchRanks, fetchUpgradesEn } from '../lib/api';
+import {
+  dayStart,
+  fetchBadgeDistribution,
+  fetchBigPatchDays,
+  fetchBuildTags,
+  fetchGenericData,
+  fetchHeroes,
+  fetchItems,
+  fetchMap,
+  fetchNpcUnits,
+  fetchPatches,
+  fetchRanks,
+  fetchUpgradesEn,
+} from '../lib/api';
 import { heroSlug } from '../lib/heroes';
 import { isShopItem, itemSlug } from '../lib/items';
 import { lanesFromInfo } from '../lib/lanes';
@@ -77,11 +90,35 @@ export function useBuildTags() {
   return useMemo(() => new Map((q.data ?? []).map((tag) => [tag.id, tag])), [q.data]);
 }
 
+/** /assets/generic-data in the UI language (lanes, place names, prices, soul shares…). */
+export function useGenericData() {
+  const { meta } = useT();
+  return useQuery({ queryKey: ['generic-data', meta.api], queryFn: ({ signal }) => fetchGenericData(meta.api, signal), ...STATIC });
+}
+
 /** The three duo lanes (York · Broadway · Greenwich) with localised names and colours. */
 export function useLanes() {
-  const { meta } = useT();
-  const q = useQuery({ queryKey: ['generic-data', meta.api], queryFn: ({ signal }) => fetchGenericData(meta.api, signal), ...STATIC });
+  const q = useGenericData();
   return useMemo(() => lanesFromInfo(q.data?.lane_info), [q.data]);
+}
+
+/** Players by rank over the last 30 days (wiki → ranks). */
+export function useBadgeDistribution() {
+  const since = dayStart(30);
+  return useQuery({ queryKey: ['badge-distribution', since], queryFn: ({ signal }) => fetchBadgeDistribution(since, signal), staleTime: 60 * 60_000 });
+}
+
+/** Everything placed on the map (wiki). Same for every language. */
+export function useGameMap() {
+  return useQuery({ queryKey: ['map'], queryFn: ({ signal }) => fetchMap(signal), ...STATIC });
+}
+
+/** NPC units by class_name, names in the UI language (wiki: objective health, neutral souls). */
+export function useNpcUnits() {
+  const { meta } = useT();
+  const q = useQuery({ queryKey: ['npc-units', meta.api], queryFn: ({ signal }) => fetchNpcUnits(meta.api, signal), ...STATIC });
+  const byClass = useMemo(() => new Map((q.data ?? []).map((n) => [n.class_name, n])), [q.data]);
+  return { ...q, byClass };
 }
 
 export function usePatches() {

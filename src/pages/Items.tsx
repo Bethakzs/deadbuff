@@ -89,6 +89,9 @@ export function ItemsPage() {
             <span className="eyebrow">{t('items.eyebrow')}</span>
             <h1 className="display page-head__title">{t('items.title')}</h1>
             <p className="page-head__sub muted">{t('items.sub')}</p>
+            <Link className="link-more page-head__wiki" to="/wiki/shop">
+              {t('wiki.link.shop')}
+            </Link>
           </div>
           <FilterBar fetching={isFetching && !isLoading} />
         </header>

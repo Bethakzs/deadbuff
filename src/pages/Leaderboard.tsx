@@ -145,6 +145,9 @@ export function LeaderboardPage() {
             <span className="eyebrow">{t('lb.eyebrow')}</span>
             <h1 className="display page-head__title">{t('lb.title')}</h1>
             <p className="page-head__sub muted">{t('lb.sub')}</p>
+            <Link className="link-more page-head__wiki" to="/wiki/ranks">
+              {t('wiki.link.ranks')}
+            </Link>
           </div>
         </header>
 

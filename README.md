@@ -290,6 +290,8 @@ src/
                            langFromPath(), pathForLang()
     en.ts                  English strings — defines the key set (MsgKey)
     uk.ts / de.ts / es.ts / ru.ts   translations — Record<MsgKey, Msg>, TypeScript fails if a key is missing
+    wiki/en.ts … ru.ts     texts of the wiki articles (souls, shop, combat, ranks, glossary), spread into the main
+                           dictionaries (`...wikiEn`) — the map article's keys stay in the main files
   lib/
     api.ts                 ALL Deadlock API calls live here (fetch wrapper: proxy /api/dl → direct fallback,
                            endpoints, StatFilters -> params, dayStart())
@@ -319,6 +321,11 @@ src/
     match.ts               match page maths: purchases(), teamTotals(), laneResults() (who won each lane on souls at 10:00),
                            soulLead(), objectiveEvents(), killMatrix() (who killed whom, from death_details),
                            statAt()/finalStat() over the stat snapshots
+    wiki.ts                wiki articles declared once (ARTICLES: map, souls, shop, combat, ranks, glossary → sections →
+                           blocks of dictionary keys / functions of WikiCtx), LEVEL_SOULS, RESPAWN — rendered by React
+                           (pages/wiki/Article.tsx) AND by scripts/prerender.ts, so the static text matches the page
+    map.ts                 wiki data: MAP_LAYERS, CAMP_KINDS / OBJECTIVES / LANES / DISTRICTS / TIMELINE (hand-written
+                           spawn times etc.), ziplines(), mapMarkers(), districtSpots(), wikiNumbers() — pure, also prerender
     patches.ts             patchTimeline() (changelog posts + big patch days), patchWindows() (7 days before vs
                            7 days after, cut at neighbouring patches), patchImpact() — pure, also used by prerender
   hooks/
@@ -403,6 +410,13 @@ src/
                            three feature cards, data / Deadlock API partner card, ingest tool link
     Counters.tsx           /counters (CountersIndexPage) and /counters/:slug (CountersPage): best counters, heroes it
                            beats, items against it; exports CounterGuideGrid (also on /draft)
+    wiki/
+      index.tsx            WikiPage shell for /wiki and /wiki/:slug: title + lead, article tabs, sticky SectionBar (chips of
+                           the current article's sections, the one being read lights up — owner's request)
+      MapArticle.tsx       the map article (/wiki): interactive minimap (layers, "seen from" Hidden King / Archmother,
+                           nearest-marker tooltip), lanes + districts, objectives, neutral camp table, events, timeline, moving
+      Article.tsx          renders a declarative article from lib/wiki.ts (p / cards / table / terms / link blocks) + the
+                           custom blocks Levels (0–35), Tiers (shop prices + items per slot) and Ranks (badge distribution)
     NotFound.tsx
     hero/
       HeroPage.tsx         header (bg art, portrait, SVG name, stats) + sticky tabs; sets --hero colour on <html>
@@ -418,6 +432,7 @@ src/
     pages.css              page layouts + responsive rules
     features.css           accounts, favourites, dashboard, compare, match analysis
     draft.css              draft helper + counter pages
+    wiki.css               wiki (map, markers .mk--{layer}, lanes, objectives, camp table, timeline)
 ```
 
 ### Routes
@@ -436,6 +451,8 @@ src/
 | `/draft` | Draft helper. `e=` enemy slugs (≤6), `a=` teammate slugs (≤5), `me=` your hero. Old `?mode=team|build` links still parse (build without `me` = first ally) and are rewritten on the first edit. Prerendered (how it works + every hero's best counters as text) |
 | `/counters` | Counter guides index (every hero → its counter page). Prerendered |
 | `/about` | About the site and the owner (streamer BethakZS, Twitch link), data source / partner. Linked from the footer ("Browse" column) and the site search ("about", "twitch", "bethakzs"). Prerendered with an `AboutPage` JSON-LD (author = BethakZS, `sameAs` Twitch) |
+| `/wiki` | Wiki: the map — interactive minimap with layers, lanes and districts, objectives, neutral camps, events, match timings, getting around. In the "three lines" menu (after Draft helper) and the site search ("wiki", "map", "urn", "midboss"…). Prerendered (all sections as text) |
+| `/wiki/:slug` | Wiki articles: `souls` (souls, sharing, orbs, unsecured souls, comeback, levels 0–35, respawn), `shop` (tiers & prices, slots, where to buy, selling, investment bonus), `combat` (damage & resists, headshots, melee & parry, stamina & movement, crowd control, healing), `ranks` (badge distribution, last 30 days), `glossary`. Unknown slug → `/wiki`. Each is prerendered and in the site search |
 | `/counters/:slug` | Who counters a hero: best counters (draft maths), heroes it beats, items against it, link into `/draft?e=slug`. Prerendered. Unknown slug → `/counters` |
 | `/compare` | Compare two players: `?a=` (default: me) `&b=` (SPA only) |
 | `/login` | Sign in with Steam / log in / sign up (`?mode=register`, `?next=/path`, `?steam=error`) (SPA only) |
@@ -457,10 +474,10 @@ prefix; crawlers always get the URL they requested.
 
 ### SEO prerender (`scripts/prerender.ts`, runs in `npm run build`)
 Writes a static HTML file for every public route × language (≈432 routes × 5 ≈ 2160 pages: the old 226 + a page per shop item that has stats in the last 7 days (~156) +
-/patches + /leaderboard + /matches + /draft + /counters + a counter page per hero (~44) + /about): own `<title>` /
+/patches + /leaderboard + /matches + /draft + /counters + a counter page per hero (~44) + /about + /wiki + 5 wiki articles): own `<title>` /
 description (same `meta.*` dictionary keys as the runtime `useDocumentMeta()`), canonical + hreflang
 (en, uk, de, es, ru, x-default), Open Graph / Twitter tags (hero card art as image), JSON-LD on the home page (and any
-page with `jsonLd` in its `PageDef` — /about), and a
+page with `jsonLd` in its `PageDef` — /about; every wiki page: Article + BreadcrumbList, the glossary also a DefinedTermSet), and a
 static text version of the page inside `#root` (`.seo-static`: hero role, stats, abilities with T1–T3,
 top builds with IDs, counters, lore, hero links) that React replaces on mount. Data is fetched from the
 API at build time (hero-stats over 7 days, counters, top 5 builds per hero, item-stats overall + by hero + of every
@@ -530,6 +547,11 @@ may contain `<span class="italics">` / `<i>` (also in `playstyle`) → always go
 | `GET /patches` | RSS-like changelog list (`title`, `pub_date`, `link`). |
 | `GET /assets/build-tags` | 14 tags `{id, label, icon(svg)}` — "Weapon", "Spirit", "Melee", "For New Players"… (localised). |
 | `GET /assets/generic-data` | Only `lane_info` is used: array indexed by `assigned_lane`. Real lanes: **1 York** (yellow), **4 Broadway** (blue), **6 Greenwich** (green); other slots are "Unused" / "Enemy" and are filtered out by `lanesFromInfo()`. |
+| `GET /assets/map` | Wiki map, not localised (~110 KB): `images.minimap` (1024² PNG, streets opaque, buildings transparent — used as a CSS **mask**, CORS `*`), `radius` (world x/y run −radius…+radius; `left = (x+R)/2R`, `top = (R−y)/2R`), `zipline_paths[]` (`origin` + `P0_points` offsets, one per lane, sorted by mean x → York, Broadway, Greenwich), `neutral_camps[]` (`kind` weak/medium/strong/vault, `name` prefix = district: `chinatown_`, `slums_` = Haunted Lot, `theater_`, `plaza_`), `entities.{shops (team, kind lane/base/secret), soul_urn_pads, unstable_rifts, bridge_buffs, teleporters/bounce_pads (target), healing_snacks, golden_statues, climb_ropes, steam_vents, cosmic_veils (juke rooms), crates, tough_crates, base_sentries}` — all with `left_relative`/`top_relative` (Hidden King base at the bottom). ⚠ `objective_positions` is stale (old 4-lane map, ~0.06 off the ziplines) — not used |
+| `GET /assets/ranks` (wiki) | Same endpoint as the rank filter; the ranks article uses `name`, `color` (bar colour) and `images.small_webp` |
+| `GET /analytics/badge-distribution?min_unix_timestamp=` | Wiki ranks: `unique_players` = players by the rank of their LATEST ranked match in the range (`total_matches` counts matches by average badge — not used). Clamped to the first ranked season |
+| `GET /assets/generic-data` (wiki parts) | `map_districts` (localised district / building names: "Фондова біржа", "Примарний пустир"…), `item_price_per_tier` [0, 800, 1600, 3200, 6400], `trooper_kill_gold_share_frac` (souls each hero gets, by heroes nearby), `hero_kill_gold_share_frac` (× n = total %), `objective_params` (Guardian 1375, Walker 3675, Base Guardian 1000, Shrine 2000, 25% to heroes nearby), `rejuv_params` (buff 180 s, trooper health ×1.7/2/2.3, respawn ×0.5/0.4/0.3 for the 1st/2nd/3rd Mid-Boss) |
+| `GET /assets/npc-units` | Localised `name` (Guardian, Walker, Base Guardian, neutrals), `max_health`, `gold_reward` (+ `gold_reward_bonus_percent_per_minute`), Walker `stomp_damage` / `stomp_damage_max_health_percent` / `stun_duration`, Patron (`npc_boss_tier3`) `phase2_health`, `objective_regen`, `objective_health_growth_phase1`. Midboss health and Shrine health are not there |
 
 Description HTML contains `<span class="highlight">`, inline `<svg width="128">` icons and
 `<img class="inline-attribute">`. Always render via `<Html>` (sanitizes + strips svg width/height).
@@ -688,8 +710,8 @@ Rules:
   small inner padding so the ability icon rings on the left aren't cut off.
 * Hero → Builds tab has no explanatory blurb under the title (removed on request) — just the mode switch and tag chips.
 * Header nav (owner's request): main tabs **Tier list, Heroes, Builds, Items**; then a "three lines" button that opens
-  Patches, Players, Matches, Leaderboard (`NAV` / `MORE` in `Layout.tsx`; the button gets the nav underline when one
-  of them is open). In the mobile burger all eight are listed. Mirrored in the prerender `navBlock()`.
+  Draft helper, Wiki, Patches, Players, Matches, Leaderboard (`NAV` / `MORE` in `Layout.tsx`; the button gets the nav underline when one
+  of them is open). In the mobile burger all of them are listed. Mirrored in the prerender `navBlock()`.
 * Items without stats for the current filters are not shown in the shop (owner: no "no data" cells), and the prerender
   only writes item pages for items with stats.
 * **Item tier 5 does not exist in the game** — the asset dump lists 17 such items, all priced 9999. `isShopItem()`
@@ -753,6 +775,24 @@ Rules:
   cards, peek of the next) instead of a ~1000px column (owner: "the top-5 cards don't swipe on mobile").
 * Home "Draft helper" teaser (`.draft-promo`) sits between the meta snapshot and the hero grid; the banner chips have
   a "Draft helper" chip second. The header keeps the owner's 4 main tabs.
+* **Wiki (/wiki, 17.11):** the minimap is the game PNG used as a mask over warm panel gradients (+ brass drop-shadow on a
+  wrapper — a filter on the masked element itself would be masked away). Everything on it is SVG in a 0–1000 viewBox over
+  a square canvas; "seen from Archmother" flips coordinates (1−x, 1−y) and rotates only the ground image. The tooltip
+  picks the **nearest visible marker** within 14 px (mouse) / 26 px (touch) — hit-testing the tiny shapes was too fiddly;
+  dense layers (crates, statues, vents…) lose ties. Layer toggles are a list in the side column (sticky on desktop) and
+  wrap as chips on phones. Health / souls / counts come from the API; spawn and respawn times, the timeline and all
+  mechanics text are hand-written in `lib/map.ts` + dictionaries — update them when a patch changes the map. Objective
+  names in the dictionaries copy the game's own localisation (Вартовий, Крокер, Вартовий штабу, Покровитель…);
+  district and lane-location names stay English (proper names). The canvas is capped at the screen height.
+* **Wiki SEO (17.11):** the h1 is "Deadlock Wiki — <article>" (the brass eyebrow sits inside the h1, the dash is `.sr-only`),
+  static h2s carry the section ids (Google "jump to" links), the footer has a "Wiki" column linking all six articles (internal
+  links from every page), and /items and /leaderboard link to the shop and ranks articles (`.page-head__wiki`).
+* **Wiki articles (17.11, second part):** tabs under the title (`.tabs` look, brass underline), then a full-width sticky
+  `.wiki-bar` under the site header with the sections of the current article as chips; the chip of the section being read
+  is filled brass and scrolled into view inside the strip (owner: "when I scroll down, keep these on top"). Sections use
+  `scroll-margin-top` = header + bar. Article tables become cards below 640px (numbers side by side, text cells on their
+  own line). Rank bars use the rank's own colour from the API (game data, like hero colours). New text-only facts are in
+  `lib/wiki.ts` with the date they were checked — update them with patches.
 * Footer: "Official partner of Deadlock API" brass plaque (`.partner-badge`) under the blurb, links to deadlock-api.com.
   The "Browse" column ends with "About".
 * /about: banner-style two-line title (`about.title1/2`, same `.banner__line` reveal as home), the home `.numbers` strip,
@@ -799,6 +839,9 @@ Rules:
 
 ## 10. Known limitations / ideas for next steps
 
+* **Bundle size:** all five dictionaries are in the main chunk, and the wiki texts made it grow from ~145 to ~180 KB gzip
+  (Vite warns about > 500 KB raw). Lazy-loading the wiki dictionaries per language (or the whole `pages/wiki` folder) would
+  win most of it back.
 * Item win rates are biased toward late-game items (longer games). Shown as a note under item tables; a "win rate by buy time" view (`item-stats?bucket=game_time_min`) would fix it.
 * Builds page has no win rates for builds outside a selected hero (hero-build-stats is per hero).
 * Match pages show what the metadata has; damage/healing come from the last stat snapshot. Ideas: objectives timeline,
@@ -893,9 +936,18 @@ Rules:
 - Глобальні фільтри: ранг і період. П'ять мов: EN (`/…`), UA (`/uk/…`), DE (`/de/…`), ES (`/es/…`), RU (`/ru/…`) —
   перемикач-глобус у шапці
 - Футер: «Офіційний партнер Deadlock API» (Deadbuff є серед сайтів-трекерів на deadlock-api.com), посилання «Про сайт»
+- `/wiki` — **вікі: карта** (меню «три риски», після драфту): інтерактивна мінікарта з шарами (кемпи, Пожертви грішника,
+  магазини, урна, розлом, бафи на мостах, телепорти, хілки, статуї, джамп-пади, мотузки, вентиляції, кімнати для джуку,
+  ящики), перемикач «вигляд за Таємного Короля / Архімати», лінії й райони, об'єкти зі здоров'ям, таблиця кемпів
+  нейтралів, мідбос / урна / розлом, таймінги матчу 0:00–35:00, як пересуватись картою. Під заголовком — вкладки статей,
+  а вгорі при прокрутці закріплена смуга з розділами статті (підсвічує той, що зараз читаєш)
+- Статті вікі: `/wiki/souls` (душі, як діляться, сфери, незабезпечені душі, камбек, рівні 0–35, респавн), `/wiki/shop`
+  (рівні й ціни предметів, слоти, де купувати, продаж, бонус за вкладення), `/wiki/combat` (шкода й опори, хедшоти,
+  рукопашка й парирування, стаміна і рух, контроль, лікування), `/wiki/ranks` (розподіл гравців за рангами за 30 днів),
+  `/wiki/glossary` (словник термінів)
 - `/about` — **про сайт**: «Від гравця — для гравців», живі цифри, що є на сайті, блок власника — **стрімер BethakZS** з
   кнопкою Twitch (twitch.tv/bethakzs), звідки дані й партнерство з Deadlock API
-- SEO: ~2155 статичних сторінок (~431 маршрут × 5 мов: + сторінки предметів зі статистикою, патчі, лідерборд, матчі, контрпіки,
+- SEO: ~2190 статичних сторінок (~438 маршрутів × 5 мов: + сторінки предметів зі статистикою, патчі, лідерборд, матчі, контрпіки,
   драфт), sitemap, canonical/hreflang, OG
 
 **Бекенд** — Cloudflare Pages Functions у тому ж репо (папки `functions/` і `server/`), база — Cloudflare D1:
@@ -907,7 +959,7 @@ Rules:
 
 ## 2. Поточний стан
 
-> Оновлено 16.11.2026 (фікс індексації, драфт, контрпіки).
+> Оновлено 17.11.2026 (вікі: карта).
 
 | Що | Стан |
 |---|---|
@@ -924,6 +976,8 @@ Rules:
 | Статистика сайту `/admin` | ✅ Запушено 17.11 (перевірено локально з wrangler + D1). **Власнику:** `ADMIN_USERS` = свій SteamID64 у Cloudflare (розділ 3 → «Бекенд», крок 6), увійти через Steam |
 | Аналітика | Cloudflare Web Analytics: **Workers & Pages → deadbuff → Metrics** (зняти фільтр «Site is in deadbuff.pages.dev», інакше видно лише pages.dev). За 13–16.11: 41 відвідування, 208 переглядів, топ — `/builds`, `/`, `/heroes` |
 | Деплой 16.11 | ✅ Запушено 16.11: новий драфт-помічник, сторінки `/counters`, блок драфту на головній, свайп вітрини й «Зрізу мети» на телефоні, партнер у футері, текст про ingest tool, сторінка `/about` зі стрімом власника. Збірка проходить (2160 сторінок), перевірено в браузері (EN/UA/DE, 375px) |
+| Вікі `/wiki` | ✅ 17.11: «Карта» + 5 статей (душі й рівні, магазин, бій і рух, ранги, словник), закріплена смуга розділів. Перевірено локально (UA/DE, 375px, 1440px), збірка — 2190 сторінок. Запушено 17.11 разом із SEO вікі (h1, якорі, JSON-LD, футер). **Власнику:** перечитати тексти механік (розділ 9, п. 0a3) і попросити індексацію в GSC (розділ 5) |
+| Twitch-набір | ✅ 17.11: `twitch-kit/` — 10 панелей, банер профілю, офлайн-банер, плашка для OBS у стилі сайту + інструкція (`twitch-kit/README.md`). Генерується з `twitch-kit/src/kit.html` через headless Chrome, у збірку сайту не входить. Ще не закомічено — **власнику:** вирішити, чи тримати в репозиторії |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
 підробленої cookie, унікальність логіна без урахування регістру (і для кирилиці), проксі (повторний запит 0,8 с → 0,008 с),
@@ -1019,6 +1073,12 @@ Rules:
 - robots.txt дозволяє `/api/dl/` — без цього Google рендерить сторінки без даних (розділ 6, п. 22). **Не прибирати**
 - Сторінки контрпіків `/counters/:slug` (44 герої × 5 мов) під запити «who counters haze», «haze counter deadlock»,
   «контрпік Імла». Посилання на них — з драфту, з вкладки «Матчапи» героя, з головної
+- **Вікі (17.11):** 6 статей × 5 мов = 30 сторінок у sitemap, у кожної свій title / description, h1 «Вікі Deadlock — …»,
+  якорі на розділах, JSON-LD (Article з автором BethakZS + хлібні крихти, у словнику ще 33 терміни як DefinedTermSet).
+  Посилання на статті — з футера на кожній сторінці, з `/items` (магазин) і `/leaderboard` (ранги). Цільові запити:
+  «deadlock interactive map», «deadlock soul urn», «deadlock midboss / rejuvenator», «deadlock guardian / walker / patron
+  health», «deadlock neutral camps respawn», «deadlock flex slots», «deadlock item tiers», «deadlock parry», «deadlock
+  dash jump», «deadlock respawn time», «deadlock rank distribution», «deadlock terms», українські й інші аналоги
 
 **Цільові запити:** `haze deadlock build`, `deadlock tier list`, `deadlock builds`, `deadlock <hero> build`,
 `deadlock counters`, українські аналоги.
@@ -1030,6 +1090,8 @@ Rules:
 - Просування (рішення власника): Reddit r/DeadlockTheGame, Discord-спільноти Deadlock, українська спільнота,
   стрімери/ютубери. Зворотні посилання сильно впливають на позиції
 - Нові сторінки (предмети, матчі, патчі) = нові входи з Google — див. розділ 11
+- Після деплою вікі: у Search Console «Перевірка URL» → запит на індексування для `/wiki`, `/wiki/souls`, `/wiki/ranks`,
+  `/uk/wiki` (ліміт ≈ 10 на день), решту Google знайде сам через sitemap і футер
 
 ---
 
@@ -1148,6 +1210,18 @@ Rules:
     - головна: блок «Кого пікнути проти цього складу» (6 найпопулярніших героїв як ворожий склад → драфт), чип у банері
     - мобілка: вітрину «#N у меті» можна гортати свайпом; три панелі «Зрізу мети» — горизонтальна стрічка зі свайпом
     - текст на профілі гравця: замість «додай бота в Steam» — ingest tool (deadlock-api.com/ingest-cache)
+28. **17.11 — повна вікі.** Запит: «коли гортаю вниз, показуй розділи вгорі, щоб я завжди міг на них перейти» і «починай
+    робити повну вікі». Зроблено закріплену смугу розділів і 5 статей. Статті описані один раз у `src/lib/wiki.ts`, і з цього
+    опису малюється і сторінка, і статичний текст для Google. Що бере дані з API: ціни тирів, частки душ, душі за об'єкти,
+    бонуси Rejuvenator, назви районів і точок карти (офіційний переклад гри), розподіл рангів. Решта фактів — вручну,
+    звірено з deadlock.wiki (сторінки Souls / Trooper / Death оновлені у вересні–жовтні 2026). У тексті мідбоса тепер цифри
+    Rejuvenator з API (+70% здоров'я воякам, респавн на 50% коротший на 3 хв), колодязі душ перенесено на 2:30
+27. **17.11 — вікі.** Запит: «додати wiki з корисною інфою, +- як deadlock.wiki, нова вкладка». Перший розділ — «Карта»
+    (`/wiki`, у меню «три риски» після драфту — головні 4 таби не чіпали). Тексти свої, не копія deadlock.wiki (дублі Google
+    не ранжує, і в них своя ліцензія). Здоров'я, душі, кількість і позиції всього на карті — з Deadlock API
+    (`/assets/map`, `/assets/npc-units`), тож оновлюються з патчами; таймінги й механіки — вручну в `src/lib/map.ts`
+    і словниках (звірено з deadlock.wiki 17.11). Назви об'єктів — як в офіційній локалізації гри (Вартовий, Крокер,
+    Вартовий штабу, Покровитель); назви районів і точок на лініях лишились англійськими (власні назви)
 26. **17.11 — статистика для власника.** Запит: «бачити, скільки користувачів зареєструвалось, скільки входило через
     Steam, скільки переходило на сторінки». Зроблено `/admin` (лише для `ADMIN_USERS`): спосіб реєстрації береться з
     таблиці users для всіх акаунтів; входи, реєстрації й прив'язки Steam логуються з 17.11; перегляди рахує сам сайт
@@ -1227,6 +1301,15 @@ nurse-harrow 10/3/5/0, baba 4/6/8/5.
    `scripts/prerender.ts`)
 0a2. Попросити Deadlock API зробити іконку Deadbuff на їхній головній **посиланням** на deadbuff.net (зараз це лише
    картинка — для Google не рахується). Посилання з тематичного сайту — найцінніше для SEO нового домену
+0a3. **Вікі (`/wiki`)**: перечитати як гравець тексти механік — мідбос і Rejuvenator, урна, розлом, бафи на мостах,
+   Вартовий штабу, таймінги (особливо «хвилі вояк кожні 30 / 25 / 20 с» і «постійні бафи сильнішають о 10:00 і 30:00»).
+   Їх нема в API, вони взяті з deadlock.wiki, а та сторінка позначена як застаріла. Здоров'я Святилища й мідбоса
+   в API немає — не показуємо. Також: чи лишати вікі в меню «три риски», чи винести в головні таби
+0a4. Статті вікі (душі, магазин, бій, ранги, словник) теж варто перечитати. Сумнівні місця: душі за Пожертву грішника — API
+   каже 155, а deadlock.wiki 310 (у таблиці кемпів показуємо 155 з API); таблиця бонусу за вкладення в магазині без цифр,
+   бо точних даних нема; список контролю спрощений
+0a5. Що ще можна додати у вікі: сторінки героїв уже є, тож далі — гайди від BethakZS на героїв, постійні бафи зі статуй
+   (рівні 1–3), детальніше про об'єкти
 0b. Переклади нових текстів DE / ES / RU — підібрані вручну, варто глянути носіям (16.11 додано ~60 рядків драфту
    й контрпіків: DE «Wer kontert …», ES «Counters contra …», RU «Контрпики: …»): DE «Draft-Helfer», «Jäger»;
    ES «Asistente de draft», «Panel»; RU «Драфт-помощник»
@@ -1405,3 +1488,11 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   Частину I (§3 бекенд, §4, маршрути)
 - **17.11.2026** — розбір Web Analytics і GSC, швидкість головної на телефонах (розділ 6, п. 25); оновлено розділ 2 і
   Частину I (§4, §8, §10)
+- **17.11.2026 (шоста частина)** — SEO вікі: h1 з «Deadlock», якорі розділів, JSON-LD, колонка «Вікі» у футері, посилання
+  з предметів і лідерборду; оновлено розділи 2, 5 і Частину I (§4, §8)
+- **17.11.2026 (п'ята частина)** — повна вікі: закріплена смуга розділів, статті душі / магазин / бій / ранги / словник
+  (розділ 6, п. 28); оновлено розділи 1, 2, 6, 9 і Частину I (§4, §6, §8, §10)
+- **17.11.2026 (четверта частина)** — вікі `/wiki`: карта (розділ 6, п. 27); оновлено розділи 1, 2, 6, 9 і Частину I
+  (§4 файли й маршрути, §6 `/assets/map` і `/assets/npc-units`, §8 дизайн вікі)
+- **17.11.2026 (третя частина)** — Twitch-набір для каналу BethakZS у `twitch-kit/` (панелі, банери, плашка OBS,
+  поради щодо Social Links і біо); оновлено розділ 2

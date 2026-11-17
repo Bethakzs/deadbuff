@@ -25,6 +25,7 @@ import { PatchesPage } from './pages/Patches';
 import { PlayerPage } from './pages/Player';
 import { PlayersPage } from './pages/Players';
 import { TierListPage } from './pages/TierList';
+import { WikiPage } from './pages/wiki';
 
 /** Top-level section of the path — switching hero tabs shouldn't replay the page transition. */
 const sectionKey = (path: string) => path.split('/').slice(0, 3).join('/');
@@ -73,6 +74,7 @@ export default function App() {
           <Route path="/matches/:matchId" element={<MatchPage />} />
           <Route path="/patches" element={<PatchesPage />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />
+          <Route path="/wiki/:slug?" element={<WikiPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<NotFound />} />
