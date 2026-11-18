@@ -1,7 +1,7 @@
 /* Shared glue for the account endpoints: config check, current user, validation rules. */
 import { parseAccountInput } from '../src/lib/steam';
 import { accountEnv, type Env } from './env';
-import { nameKey, publicUser, userById, type UserRow } from './db';
+import { nameKey, publicUser, q, userById, type UserRow } from './db';
 import { fail } from './http';
 import { readSession } from './session';
 
@@ -21,12 +21,27 @@ export async function currentUser(ctx: AuthCtx, req: Request): Promise<UserRow |
   return id ? userById(ctx.db, id) : null;
 }
 
+const adminTokens = (env: Env) => (env.ADMIN_USERS ?? '').split(/[\s,;]+/).filter(Boolean);
+
 /** ADMIN_USERS lists this user — by Deadbuff username (any case) or by the linked Steam account. */
 export function isAdmin(env: Env, u: UserRow | null): boolean {
-  if (!u || !env.ADMIN_USERS) return false;
-  return env.ADMIN_USERS.split(/[\s,;]+/)
-    .filter(Boolean)
-    .some((token) => nameKey(token) === nameKey(u.username) || (u.account_id !== null && parseAccountInput(token) === u.account_id));
+  if (!u) return false;
+  return adminTokens(env).some((token) => nameKey(token) === nameKey(u.username) || (u.account_id !== null && parseAccountInput(token) === u.account_id));
+}
+
+/** Ids of every account listed in ADMIN_USERS — the owner's own activity is left out of the site stats. */
+export async function adminUserIds(env: Env, db: D1Database): Promise<number[]> {
+  const tokens = adminTokens(env);
+  if (!tokens.length) return [];
+  const names = JSON.stringify(tokens.map(nameKey));
+  const accounts = JSON.stringify(tokens.map(parseAccountInput).filter((n) => n !== null));
+  const r = await q(db, () =>
+    db
+      .prepare('SELECT id FROM users WHERE username_key IN (SELECT value FROM json_each(?1)) OR account_id IN (SELECT value FROM json_each(?2))')
+      .bind(names, accounts)
+      .all<{ id: number }>(),
+  );
+  return (r.results ?? []).map((x) => x.id);
 }
 
 /** What the SPA gets for the logged-in user: the public fields + `admin: true` for the owner. */

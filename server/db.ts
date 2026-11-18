@@ -60,6 +60,33 @@ const SCHEMA = [
      vid TEXT NOT NULL,
      PRIMARY KEY (day, vid)
    )`,
+  // one row per visit (session): the same daily visitor hash with less than 30 minutes between pages.
+  // user_id = logged-in account, country = Cloudflare geo, ref = host of the external referrer
+  `CREATE TABLE IF NOT EXISTS visits (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     day        TEXT NOT NULL,
+     vid        TEXT NOT NULL,
+     user_id    INTEGER,
+     started_at INTEGER NOT NULL,
+     last_at    INTEGER NOT NULL,
+     views      INTEGER NOT NULL,
+     lang       TEXT NOT NULL,
+     country    TEXT,
+     device     TEXT NOT NULL,
+     browser    TEXT NOT NULL,
+     os         TEXT NOT NULL,
+     ref        TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS visits_vid ON visits (vid)`,
+  `CREATE INDEX IF NOT EXISTS visits_day ON visits (day)`,
+  // the pages of a visit in order (n = 1, 2, …); path without the language prefix
+  `CREATE TABLE IF NOT EXISTS visit_pages (
+     visit_id INTEGER NOT NULL,
+     n        INTEGER NOT NULL,
+     at       INTEGER NOT NULL,
+     path     TEXT NOT NULL,
+     PRIMARY KEY (visit_id, n)
+   ) WITHOUT ROWID`,
 ];
 
 /** Runs `fn`; if a table is missing (fresh database) creates the schema and runs it once more. */

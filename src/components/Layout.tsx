@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useSteamProfiles } from '../hooks/useStats';
 import { LANGS, useT, type Lang, type MsgKey } from '../i18n';
+import { skipThisBrowser } from '../lib/admin';
 import { useAuth, useAuthActions } from '../lib/auth';
 import { FavoritesSync } from '../lib/favorites';
 import { useMe } from '../lib/me';
@@ -233,6 +234,10 @@ function AccountMenu() {
   const root = useRef<HTMLDivElement>(null);
 
   useEffect(() => setOpen(false), [pathname]);
+  // the owner's browser stops counting its own views, also later when logged out (see lib/admin.ts)
+  useEffect(() => {
+    if (user?.admin) skipThisBrowser();
+  }, [user?.admin]);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => !root.current?.contains(e.target as Node) && setOpen(false);

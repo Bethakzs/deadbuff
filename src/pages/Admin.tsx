@@ -1,16 +1,17 @@
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Empty, ErrorState, Page, Panel, SectionTitle, Segmented, Skeleton } from '../components/UI';
 import { LANGS, useT, type MsgKey } from '../i18n';
-import { ADMIN_PERIODS, dayRange, useAdminStats, type AdminPeriod, type AdminStats, type AuthEvent } from '../lib/admin';
+import { ADMIN_PERIODS, dayRange, useAdminStats, type AdminPeriod, type AdminStats, type AuthEvent, type Count, type VisitStats } from '../lib/admin';
 import { AuthFailure, useAuth } from '../lib/auth';
-import { fmtDate, fmtInt, fmtNum, fmtPct } from '../lib/format';
+import { fmtDate, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { useDocumentMeta } from '../lib/seo';
 
 /*
  * /admin — site statistics for the owner (users listed in the ADMIN_USERS variable on Cloudflare):
- * accounts by sign-up method (Steam / password), active users, sign-ins, page views, newest accounts.
+ * accounts by sign-up method (Steam / password), active users, sign-ins, page views, visits in detail (who opened
+ * which pages, in one visit or several), newest accounts. The owner's own activity is left out (server/stats.ts).
  * SPA only (not prerendered, not linked publicly); the account menu shows it to admins.
  */
 
@@ -75,6 +76,225 @@ function Tile({ value, label, sub, accent }: { value: string; label: string; sub
 }
 
 const EVENT_ORDER: AuthEvent[] = ['login_steam', 'login_password', 'register_steam', 'register_password', 'link_steam'];
+
+/** "/players/:id" can't be opened — link to the section instead. */
+const linkTo = (path: string) => (path.includes(':id') ? path.replace(/\/:id.*/, '') : path);
+
+/** Stable colour per visitor label, so the same browser is easy to spot across the lists. */
+const hue = (id: string) => Math.round((parseInt(id.slice(0, 4), 16) / 0xffff) * 360);
+
+/** Country code → name in the UI language ("UA" → "Україна"). */
+function useRegionName() {
+  const { meta } = useT();
+  return useMemo(() => {
+    let names: Intl.DisplayNames | null = null;
+    try {
+      names = new Intl.DisplayNames([meta.locale], { type: 'region' });
+    } catch {
+      /* old browser — show the code */
+    }
+    return (code: string | null) => {
+      if (!code || code === 'XX') return null;
+      if (code === 'T1') return 'Tor';
+      try {
+        return names?.of(code) ?? code;
+      } catch {
+        return code;
+      }
+    };
+  }, [meta.locale]);
+}
+
+function VisitorTag({ id, username }: { id: string; username: string | null }) {
+  const { t } = useT();
+  return (
+    <span className="admin-visitor">
+      <span className="admin-visitor__id num" style={{ ['--h' as string]: hue(id) }} title={t('admin.v.peopleHint')}>
+        #{id}
+      </span>
+      {username ? <b className="admin-visitor__name">{username}</b> : <span className="muted">{t('admin.v.guest')}</span>}
+    </span>
+  );
+}
+
+function CountList({ title, rows, total, name }: { title: string; rows: Count[]; total: number; name: (key: string) => string }) {
+  return (
+    <div className="admin-counts">
+      <span className="eyebrow">{title}</span>
+      <ul>
+        {rows.map((r) => (
+          <li key={r.key}>
+            <span className="admin-counts__bar" style={{ width: `${(r.n / Math.max(1, total)) * 100}%` }} />
+            <span className="admin-counts__name">{name(r.key)}</span>
+            <b className="num">{fmtInt(r.n)}</b>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const VISITS_STEP = 15;
+
+/** Visits in detail: who opened what, in one visit or several — shows when a few people inflate the views. */
+function VisitsDetail({ v }: { v: VisitStats }) {
+  const { t, ago, meta } = useT();
+  const region = useRegionName();
+  const [shown, setShown] = useState(VISITS_STEP);
+  const multi = v.sessions - v.bounces;
+  const device = (d: string) => (['desktop', 'mobile', 'tablet'].includes(d) ? t(`admin.v.device.${d}` as MsgKey) : d);
+  const other = (k: string) => (k === 'Other' || !k ? t('admin.v.other') : k);
+  const langLabel = (id: string) => LANGS.find((l) => l.id === id)?.label ?? id.toUpperCase();
+  const fmtWhen = (unix: number) => new Date(unix * 1000).toLocaleString(meta.locale, { dateStyle: 'medium', timeStyle: 'short' });
+
+  return (
+    <>
+      <SectionTitle title={t('admin.v.title')} />
+      {!v.since ? (
+        <Empty>{t('admin.v.none')}</Empty>
+      ) : (
+        <>
+          <div className="admin-tiles">
+            <Tile value={fmtInt(v.sessions)} label={t('admin.v.sessions')} sub={t('admin.v.signedIn', { x: fmtInt(v.signedIn) })} accent={BRASS} />
+            <Tile
+              value={fmtInt(v.visitors)}
+              label={t('admin.v.visitors')}
+              sub={v.visitors ? t('admin.v.perVisitor', { x: fmtNum(v.sessions / v.visitors, 1) }) : undefined}
+              accent={CREAM}
+            />
+            <Tile
+              value={v.sessions ? fmtNum(v.views / v.sessions, 1) : '—'}
+              label={t('admin.v.pagesPerVisit')}
+              sub={v.sessions ? t('admin.v.bounce', { x: fmtPct(v.bounces / v.sessions, 0) }) : undefined}
+              accent={CREAM}
+            />
+            <Tile value={multi ? fmtTime(v.seconds / multi) : '—'} label={t('admin.v.time')} sub={t('admin.v.timeSub')} accent={CREAM} />
+          </div>
+
+          <div className="admin-grid">
+            <Panel title={t('admin.v.pages')}>
+              {!v.pages.length ? (
+                <Empty>{t('admin.noData')}</Empty>
+              ) : (
+                <div className="admin-table-wrap">
+                  <table className="data-table admin-table admin-vpages">
+                    <thead>
+                      <tr>
+                        <th>{t('admin.v.col.page')}</th>
+                        <th className="num">{t('admin.v.col.views')}</th>
+                        <th className="num">{t('admin.v.col.visitors')}</th>
+                        <th className="num hide-sm">{t('admin.v.col.visits')}</th>
+                        <th className="num" title={t('admin.v.topHint')}>
+                          {t('admin.v.col.top')}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {v.pages.map((p) => {
+                        const hot = p.top >= 4 && p.top * 2 >= p.views;
+                        return (
+                          <tr key={p.path} className={hot ? 'is-hot' : undefined} title={hot ? t('admin.v.topHint') : undefined}>
+                            <td>
+                              <Link to={linkTo(p.path)} className="admin-pages__path">
+                                {p.path}
+                              </Link>
+                            </td>
+                            <td className="num">{fmtInt(p.views)}</td>
+                            <td className="num">{fmtInt(p.visitors)}</td>
+                            <td className="num hide-sm">{fmtInt(p.sessions)}</td>
+                            <td className="num admin-vpages__top">{fmtInt(p.top)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="muted small admin-note">{t('admin.v.topHint')}</p>
+            </Panel>
+
+            <Panel title={t('admin.v.people')}>
+              {!v.people.length ? (
+                <Empty>{t('admin.noData')}</Empty>
+              ) : (
+                <ul className="admin-people">
+                  {v.people.map((p) => (
+                    <li key={`${p.id}-${p.day}`}>
+                      <div>
+                        <VisitorTag id={p.id} username={p.username} />
+                        <span className="muted small admin-people__meta">
+                          {[region(p.country), device(p.device), other(p.browser), other(p.os)].filter(Boolean).join(' · ')}
+                        </span>
+                      </div>
+                      <div className="admin-people__nums">
+                        <b className="num">{t('admin.v.viewsN', { n: p.views })}</b>
+                        <span className="muted small">
+                          {t('admin.v.visitsN', { n: p.sessions })} · {t('admin.v.pagesN', { n: p.pages })} · {ago(p.lastAt)}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="muted small admin-note">{t('admin.v.peopleHint')}</p>
+            </Panel>
+          </div>
+
+          <Panel title={t('admin.v.audience')} className="admin-audience">
+            <div className="admin-counts-grid">
+              <CountList title={t('admin.v.sources')} rows={v.sources} total={v.sessions} name={(k) => k || t('admin.v.direct')} />
+              <CountList title={t('admin.v.countries')} rows={v.countries} total={v.sessions} name={(k) => region(k) ?? t('admin.v.unknown')} />
+              <CountList title={t('admin.v.devices')} rows={v.devices} total={v.sessions} name={device} />
+              <CountList title={t('admin.v.browsers')} rows={v.browsers} total={v.sessions} name={other} />
+              <CountList title={t('admin.v.systems')} rows={v.systems} total={v.sessions} name={other} />
+            </div>
+          </Panel>
+
+          <Panel title={t('admin.v.recent')} className="admin-audience">
+            {!v.recent.length ? (
+              <Empty>{t('admin.noData')}</Empty>
+            ) : (
+              <>
+                <ul className="admin-visits">
+                  {v.recent.slice(0, shown).map((r) => (
+                    <li key={r.id}>
+                      <div className="admin-visits__head">
+                        <VisitorTag id={r.visitor} username={r.username} />
+                        <span className="muted small">
+                          {[region(r.country), device(r.device), other(r.browser), other(r.os), langLabel(r.lang)].filter(Boolean).join(' · ')}
+                        </span>
+                        {r.ref && <span className="chip admin-visits__ref">{t('admin.v.from', { x: r.ref })}</span>}
+                        <span className="admin-visits__when muted small num" title={fmtWhen(r.startedAt)}>
+                          {ago(r.startedAt)} · {t('admin.v.viewsN', { n: r.views })}
+                          {r.views > 1 && ` · ${fmtTime(r.lastAt - r.startedAt)}`}
+                        </span>
+                      </div>
+                      <ol className="admin-visits__path">
+                        {r.pages.map((p, i) => (
+                          <li key={i}>
+                            <Link to={linkTo(p.path)}>{p.path}</Link>
+                            {i > 0 && <span className="muted num">+{fmtTime(p.t)}</span>}
+                          </li>
+                        ))}
+                        {r.views > r.pages.length && <li className="muted">+{r.views - r.pages.length}</li>}
+                      </ol>
+                    </li>
+                  ))}
+                </ul>
+                {v.recent.length > shown && (
+                  <button className="btn btn--ghost admin-more" onClick={() => setShown((n) => n + VISITS_STEP)}>
+                    {t('admin.v.more')}
+                  </button>
+                )}
+              </>
+            )}
+          </Panel>
+          <p className="muted small-note">{t('admin.v.since', { date: v.since })}</p>
+        </>
+      )}
+    </>
+  );
+}
 
 function Report({ s }: { s: AdminStats }) {
   const { t, ago } = useT();
@@ -175,6 +395,8 @@ function Report({ s }: { s: AdminStats }) {
           </div>
         </>
       )}
+
+      <VisitsDetail v={s.visits} />
 
       <SectionTitle title={t('admin.recent')} />
       {!s.recent.length ? (

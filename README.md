@@ -210,8 +210,8 @@ functions/                       file-based routes (each file = an endpoint)
   api/me/index.ts                GET  → { user | null } · DELETE → delete account + favourites
   api/me/steam.ts                DELETE → unlink Steam (only when the user has a password)
   api/favorites.ts               GET list · POST {kind,id} | {items:[…]} · DELETE {kind,id} → { items }
-  api/nav.ts                     POST {p: path} → 204 — one page view (SPA beacon, production only; bots / other
-                                 origins / odd paths dropped; no cookie)
+  api/nav.ts                     POST {p: path, r?: referrer} → 204 — one page view (SPA beacon, production only;
+                                 bots / other origins / odd paths / /admin / ADMIN_USERS accounts dropped; sets no cookie)
   api/admin/stats.ts             GET ?days=7|30|90|0 → AdminStats, only for ADMIN_USERS (401 guest, 403 others)
   api/[[rest]].ts                any other /api/* → JSON 404
 server/                          shared code (outside functions/ so it doesn't become routes)
@@ -221,10 +221,11 @@ server/                          shared code (outside functions/ so it doesn't b
   password.ts   PBKDF2-SHA256 "pbkdf2_sha256$<rounds>$<salt>$<hash>", constant-time verify, rehash on login when rounds grow
   db.ts         SCHEMA (created on first "no such table"), users / favorites / auth_throttle queries
   steam-openid.ts  redirect URL + check_authentication verification
-  auth.ts       currentUser(), isAdmin() (ADMIN_USERS: usernames and/or Steam ids), userPayload() (public user +
-                `admin: true`), validation rules, username from a Steam persona name
+  auth.ts       currentUser(), isAdmin() (ADMIN_USERS: usernames and/or Steam ids), adminUserIds(), userPayload()
+                (public user + `admin: true`), validation rules, username from a Steam persona name
   stats.ts      owner stats: logEvent() (auth_events), markActive() (user_days), recordView() (page_views +
-                day_visitors), normalizePath(), visitorId() (daily salted hash), adminStats() (the /admin report)
+                day_visitors + visits / visit_pages), normalizePath(), refHost(), parseUa(), visitorId() (daily salted
+                hash), adminStats() (the /admin report, owner's own rows left out)
 ```
 - **Proxy** (`/api/dl`): GET only, sections `assets|analytics|builds|players|matches|leaderboard|patches`. Cache key =
   path + sorted query in `caches.default`. Per-section policy (`policy()`): fresh time (assets 6 h, analytics/patches
@@ -239,8 +240,17 @@ server/                          shared code (outside functions/ so it doesn't b
   `auth_events` from 17.11.2026; `/api/me` marks the user active for the day (`user_days`); the SPA sends one
   `POST /api/nav` per route change (production builds) → `page_views` (day × path, player / match ids folded to
   `:id`) + `day_visitors` (SHA-256 of day + IP + UA + SESSION_SECRET, truncated — no cookie, unlinkable across
-  days). Cost: +1 Function call and 2 D1 writes per page view (Free: 100k calls and 100k rows written per day).
-  `/api/` stays disallowed in robots.txt, so Googlebot renders are not counted. Deleting an account removes its
+  days). **Visits** (`visits` + `visit_pages`, from 18.11): the same daily hash with < 30 min between pages = one
+  visit; a visit keeps device / browser / OS (rough UA parse, "Steam" = the in-game overlay), `request.cf.country`,
+  the external referrer host (the SPA sends `document.referrer` with the first view of a page load), the account
+  when logged in, and its pages in order (bare path + time). The report reads them for "Visits in detail": per-page
+  views / visitors / visits / "max by one visitor" (inflation check), top visitors (6-char label of the hash,
+  username if logged in), sources, countries, devices, browsers, systems, latest 60 visits. **The owner is never
+  counted**: `/api/nav` reads the session cookie and drops ADMIN_USERS accounts, `/admin` itself is never recorded,
+  and a browser where an admin was logged in sets `localStorage deadbuff.nostats=1` (Layout → `skipThisBrowser()`)
+  and stops sending beacons; `adminStats()` also filters admin user ids out of `user_days`, `auth_events` and
+  `visits` (retroactive). Cost: +1 Function call, 1 D1 read and ~4–6 rows written per page view
+  (Free: 100k calls and 100k rows written per day). `/api/` stays disallowed in robots.txt, so Googlebot renders are not counted. Deleting an account removes its
   `user_days` and clears `user_id` in `auth_events`. Endpoint name is `/api/nav` on purpose: "hit"/"track"/"collect"
   paths are on ad-block lists.
 - **Sessions** are stateless (no sessions table). Logout clears cookies; to log everyone out rotate `SESSION_SECRET`.
@@ -315,7 +325,8 @@ src/
 " OR "<br><br>" depending on the hero)
     seo.ts                 useDocumentMeta(title, description) — runtime twin of the prerendered tags
     steam.ts               SteamID64 ⇄ account_id, parseAccountInput() (links, SteamID3, ids) — also used by server/
-    admin.ts               AdminStats type (copy of server/stats.ts), useAdminStats(), sendPageView() → /api/nav, dayRange()
+    admin.ts               AdminStats / VisitStats types (copy of server/stats.ts), useAdminStats(), sendPageView() →
+                           /api/nav (+ referrer once per page load), skipThisBrowser() (owner's browser), dayRange()
     me.ts                  useMe() = linked Steam account of the logged-in user, else "It's me" (localStorage,
                            setMe()/useLocalMe())
     match.ts               match page maths: purchases(), teamTotals(), laneResults() (who won each lane on souls at 10:00),
@@ -463,7 +474,7 @@ src/
 | `/players` | Player search (Steam name, profile link, SteamID64, SteamID3 or account id) |
 | `/players/:accountId` | Player profile: rank, recent form, match history, heroes, teammates; "It's me" button |
 | `/me` | Personal dashboard of "me" (linked Steam account, else "It's me"); guests get a sign-in prompt (SPA only) |
-| `/admin` | Site stats for the owner (users in the `ADMIN_USERS` variable): sign-ups Steam vs password, sign-ins, active users, page views. Shown in the account menu only to admins. SPA only (rewritten to `/app`) |
+| `/admin` | Site stats for the owner (users in the `ADMIN_USERS` variable): sign-ups Steam vs password, sign-ins, active users, page views, then "Visits in detail" (visits, who opened which pages, top visitors, sources, countries, devices, latest visits). The owner's own activity is not counted. Shown in the account menu only to admins. SPA only (rewritten to `/app`) |
 | `*` | 404 |
 
 **Every route also exists under `/uk`, `/de`, `/es`, `/ru`** (`/uk/heroes/haze/builds`). The language prefix is the React Router
@@ -925,7 +936,9 @@ Rules:
   `/account` — підключити / відключити Steam, вийти, видалити акаунт. В шапці — кнопка «Увійти» або аватар з меню
 - `/admin` — **статистика сайту для власника** (лише для логінів зі змінної `ADMIN_USERS`): скільки користувачів,
   скільки зареєструвались через Steam і скільки з паролем, входи (Steam / пароль), активні, реєстрації й перегляди
-  по днях, топ сторінок, мови, нові акаунти. У меню акаунта з'являється пункт «Статистика сайту»
+  по днях, топ сторінок, мови, нові акаунти; нижче — **«Візити детально»**: сесії, хто які сторінки відкривав (і чи
+  не одна людина накручує), найактивніші відвідувачі, джерела, країни, пристрої, останні візити з ланцюжком сторінок.
+  Власні перегляди власника не рахуються. У меню акаунта з'являється пункт «Статистика сайту»
 - **Обране**: зірочка на сторінці героя і на кожному білді; у гостя зберігається в браузері, після входу
   переноситься в акаунт
 - `/me` — **особистий дашборд**: вінрейт на кожному герої проти середнього на твоєму ранзі, найсильніші й
@@ -973,11 +986,11 @@ Rules:
 | Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47, «Сторінка з переспрямуванням» 1. Причина: robots.txt блокував `/api/`, тож Google рендерив сторінки без даних. Фікс `Allow: /api/dl/` задеплоєно 16.11 (`1777df3`) — розділ 6, п. 22. Власнику: «Перевірити виправлення» в GSC |
 | Партнерство | ✅ Deadbuff — офіційний партнер Deadlock API (іконка серед трекерів на deadlock-api.com, поки без посилання) |
 | Швидкість головної | ✅ 17.11: на телефонах вітрина без важкого фону (−4 МБ), запушено (розділ 6, п. 25) |
-| Статистика сайту `/admin` | ✅ Запушено 17.11 (перевірено локально з wrangler + D1). **Власнику:** `ADMIN_USERS` = свій SteamID64 у Cloudflare (розділ 3 → «Бекенд», крок 6), увійти через Steam |
+| Статистика сайту `/admin` | ✅ Запушено 17.11 (перевірено локально з wrangler + D1). **Власнику:** `ADMIN_USERS` = свій SteamID64 у Cloudflare (розділ 3 → «Бекенд», крок 6), увійти через Steam. 18.11: власні перегляди, входи й «активність» власника не рахуються; новий блок «Візити детально» (сесії, хто що відкривав, джерела, країни, пристрої) — розділ 6, п. 29. Перевірено локально (wrangler + D1, 375px), ще не закомічено |
 | Аналітика | Cloudflare Web Analytics: **Workers & Pages → deadbuff → Metrics** (зняти фільтр «Site is in deadbuff.pages.dev», інакше видно лише pages.dev). За 13–16.11: 41 відвідування, 208 переглядів, топ — `/builds`, `/`, `/heroes` |
 | Деплой 16.11 | ✅ Запушено 16.11: новий драфт-помічник, сторінки `/counters`, блок драфту на головній, свайп вітрини й «Зрізу мети» на телефоні, партнер у футері, текст про ingest tool, сторінка `/about` зі стрімом власника. Збірка проходить (2160 сторінок), перевірено в браузері (EN/UA/DE, 375px) |
 | Вікі `/wiki` | ✅ 17.11: «Карта» + 5 статей (душі й рівні, магазин, бій і рух, ранги, словник), закріплена смуга розділів. Перевірено локально (UA/DE, 375px, 1440px), збірка — 2190 сторінок. Запушено 17.11 разом із SEO вікі (h1, якорі, JSON-LD, футер). **Власнику:** перечитати тексти механік (розділ 9, п. 0a3) і попросити індексацію в GSC (розділ 5) |
-| Twitch-набір | ✅ 17.11: `twitch-kit/` — 10 панелей, банер профілю, офлайн-банер, плашка для OBS у стилі сайту + інструкція (`twitch-kit/README.md`). Генерується з `twitch-kit/src/kit.html` через headless Chrome, у збірку сайту не входить. Ще не закомічено — **власнику:** вирішити, чи тримати в репозиторії |
+| Twitch-набір | ✅ 17.11: `twitch-kit/` — 10 панелей, банер профілю, офлайн-банер, плашка для OBS у стилі сайту + інструкція (`twitch-kit/README.md`). Генерується з `twitch-kit/src/kit.html` через headless Chrome, у збірку сайту не входить. Власник поставив лише панель Deadbuff і попросив решту «у своєму стилі, не Deadlock» → 17.11: `twitch-kit/panels-bethak/` — 8 панелей у стилі його банера (нічна кімната, фіолетовий неон, крейда з короною, шматки банера), з `twitch-kit/src/bethak.html`. Ще не закомічено — **власнику:** вирішити, чи тримати в репозиторії |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
 підробленої cookie, унікальність логіна без урахування регістру (і для кирилиці), проксі (повторний запит 0,8 с → 0,008 с),
@@ -1210,6 +1223,17 @@ Rules:
     - головна: блок «Кого пікнути проти цього складу» (6 найпопулярніших героїв як ворожий склад → драфт), чип у банері
     - мобілка: вітрину «#N у меті» можна гортати свайпом; три панелі «Зрізу мети» — горизонтальна стрічка зі свайпом
     - текст на профілі гравця: замість «додай бота в Steam» — ingest tool (deadlock-api.com/ingest-cache)
+29. **18.11 — статистика без власника + візити детально.** Запит: «щоб моя статистика не показувалась (з мого
+    акаунта)» і «трекати, хто на які сторінки заходить — з однією сесією чи з різними, щоб бачити, що перегляди не
+    накручують»; старий розділ «Відвідування» лишити, детальніше — нижче. Зроблено: `/api/nav` не рахує акаунти з
+    `ADMIN_USERS` (за cookie сесії), а браузер, де власник хоч раз був залогінений, перестає слати маячок узагалі
+    (`localStorage deadbuff.nostats`) — тож і без входу на цьому пристрої не рахується; `/admin` не рахується ніколи.
+    Входи й «активні» власника вирізаються у звіті — і за минулі дні. Старі перегляди (`page_views` до 18.11)
+    відокремити не можна — там нема, чиї вони. Новий блок «Візити детально»: візит = той самий щоденний хеш
+    відвідувача з паузою < 30 хв (без cookie, як і раніше); сторінки з колонкою «Макс. від одного» (підсвічено, коли
+    одна людина зробила ≥ половини переглядів — ознака накрутки), найактивніші відвідувачі (мітка `#a3f2c1` = той самий
+    браузер того дня, нік — якщо залогінений), джерела (реферер: twitch.tv, google.com…), країни, пристрої, браузери
+    (окремо «Steam» — оверлей гри), системи, останні візити з ланцюжком сторінок і часом переходів
 28. **17.11 — повна вікі.** Запит: «коли гортаю вниз, показуй розділи вгорі, щоб я завжди міг на них перейти» і «починай
     робити повну вікі». Зроблено закріплену смугу розділів і 5 статей. Статті описані один раз у `src/lib/wiki.ts`, і з цього
     опису малюється і сторінка, і статичний текст для Google. Що бере дані з API: ціни тирів, частки душ, душі за об'єкти,
@@ -1297,6 +1321,10 @@ nurse-harrow 10/3/5/0, baba 4/6/8/5.
    знадобиться поштовий сервіс (наприклад, Resend, безкоштовно до 3 тис. листів/міс) або Cloudflare Email Workers
 0. ✅ Зміни 16.11 (драфт, контрпіки, головна, футер, `/about`) запушено. **Власнику:** глянути /draft, /counters/haze, /about на телефоні
 0a0. ⏳ Додати `ADMIN_USERS` (SteamID64 власника) у Cloudflare (розділ 3 → «Бекенд», крок 6) — `/admin` запушено 17.11
+0a0a. Старі перегляди в `/admin` (з 16.11 до деплою 18.11) змішані з переглядами власника і їх не розділити. Якщо
+   заважають — можна обнулити `page_views` і `day_visitors` у D1 (Cloudflare → D1 → Console), тоді блок «Відвідування»
+   почнеться з чистого аркуша. Також: на телефоні, де власник ніколи не входив в акаунт, перегляди рахуються — досить
+   один раз увійти там (або відкрити `/admin`)
 0a1. Перевірити, що посилання на Twitch правильне: **twitch.tv/bethakzs** (на `/about`, у `About.tsx` → `TWITCH_URL` і в
    `scripts/prerender.ts`)
 0a2. Попросити Deadlock API зробити іконку Deadbuff на їхній головній **посиланням** на deadbuff.net (зараз це лише
@@ -1484,6 +1512,8 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   головній, свайпи на мобілці, ingest tool (розділ 6, п. 23); оновлено розділи 1, 2, 5, 9, 12 і Частину I (§1, §4, §6–8, §10)
 - **16.11.2026 (третя частина)** — сторінка `/about` зі стрімером BethakZS (розділ 6, п. 24); оновлено розділи 1, 2, 9, 11 і
   Частину I (§3, §4, §8)
+- **18.11.2026** — `/admin`: власник не рахується, блок «Візити детально» (розділ 6, п. 29); оновлено розділи 1, 2, 9 і
+  Частину I (§3 бекенд, §4)
 - **17.11.2026 (друга частина)** — статистика сайту `/admin` для власника (розділ 6, п. 26); оновлено розділи 1–3, 9 і
   Частину I (§3 бекенд, §4, маршрути)
 - **17.11.2026** — розбір Web Analytics і GSC, швидкість головної на телефонах (розділ 6, п. 25); оновлено розділ 2 і

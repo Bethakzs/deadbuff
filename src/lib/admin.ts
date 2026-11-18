@@ -33,6 +33,58 @@ export interface AdminStats {
     top: { path: string; views: number }[];
     langs: { lang: string; views: number }[];
   };
+  visits: VisitStats;
+}
+
+export interface Count {
+  key: string;
+  n: number;
+}
+
+/** Visits (sessions): the same daily visitor hash with less than 30 minutes between pages. */
+export interface VisitStats {
+  since: string | null;
+  sessions: number;
+  visitors: number;
+  views: number;
+  bounces: number;
+  /** total seconds of the visits with 2+ pages */
+  seconds: number;
+  signedIn: number;
+  pages: { path: string; views: number; visitors: number; sessions: number; top: number }[];
+  people: {
+    id: string;
+    day: string;
+    username: string | null;
+    views: number;
+    sessions: number;
+    pages: number;
+    country: string | null;
+    device: string;
+    browser: string;
+    os: string;
+    lastAt: number;
+  }[];
+  sources: Count[];
+  countries: Count[];
+  devices: Count[];
+  browsers: Count[];
+  systems: Count[];
+  recent: {
+    id: number;
+    visitor: string;
+    username: string | null;
+    startedAt: number;
+    lastAt: number;
+    views: number;
+    lang: string;
+    country: string | null;
+    device: string;
+    browser: string;
+    os: string;
+    ref: string | null;
+    pages: { path: string; t: number }[];
+  }[];
 }
 
 export const ADMIN_PERIODS = [7, 30, 90, 0] as const;
@@ -49,14 +101,38 @@ export function useAdminStats(days: AdminPeriod, enabled: boolean) {
   });
 }
 
+/** localStorage flag: this browser is the owner's — its views are not sent (set when /admin opens). */
+const SKIP_KEY = 'deadbuff.nostats';
+
+export function skipThisBrowser() {
+  try {
+    localStorage.setItem(SKIP_KEY, '1');
+  } catch {
+    /* private mode — the server still skips the owner's account */
+  }
+}
+
+const skipped = () => {
+  try {
+    return localStorage.getItem(SKIP_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+/** The external referrer goes with the first view of a page load only (later views are clicks inside the site). */
+let referrerSent = false;
+
 /**
  * One page view for the owner's stats. Production builds only (dev has no Functions); a plain-text Blob
  * keeps it a simple request. Never throws — statistics must not break the page.
  */
 export function sendPageView(path: string) {
-  if (!import.meta.env.PROD || typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return;
+  if (!import.meta.env.PROD || typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function' || skipped()) return;
   try {
-    navigator.sendBeacon('/api/nav', new Blob([JSON.stringify({ p: path })], { type: 'text/plain' }));
+    const r = referrerSent ? undefined : document.referrer || undefined;
+    referrerSent = true;
+    navigator.sendBeacon('/api/nav', new Blob([JSON.stringify({ p: path, r })], { type: 'text/plain' }));
   } catch {
     /* ignore */
   }
