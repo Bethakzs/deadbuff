@@ -280,7 +280,7 @@ public/
                            /favicon.ico must exist or the SPA fallback answers it with HTML
 vite.config.ts             single "vendor" chunk for node_modules
 scripts/
-  prerender.ts             SEO: static HTML per route × language, sitemap.xml, robots.txt, app.html, _redirects
+  prerender.ts             SEO: static HTML per route × language, sitemap.xml (index) + sitemap-*.xml, robots.txt, app.html, _redirects
   preview.ts               local server for dist/ that mimics Cloudflare Pages routing
 .github/workflows/
   daily-rebuild.yml        daily Cloudflare Pages deploy-hook ping (fresh prerendered numbers)
@@ -496,6 +496,11 @@ hero against each enemy (`enemy_hero_ids`, one call per hero, for the counter pa
 latest patch impact, Europe leaderboard). Player and match pages are not
 prerendered. When adding a page or a hero tab: add its `meta.*` keys, call `useDocumentMeta()` in the
 page AND add it to `pages()` in the prerender script.
+
+`sitemap.xml` is a **sitemap index** pointing at one file per page kind (`SITEMAP_GROUPS`): `sitemap-pages.xml` (home,
+lists, draft, about… — 60), `sitemap-heroes.xml` (hero pages with their tabs — 1100), `sitemap-counters.xml` (220),
+`sitemap-items.xml` (780), `sitemap-wiki.xml` (30). Search Console reports indexing per file (Sitemaps → a file →
+"See page indexing"), which shows which kind of page Google leaves out. The submitted URL stays `/sitemap.xml`.
 
 **robots.txt must keep `Allow: /api/dl/`.** Googlebot renders pages with JS and obeys robots.txt for every
 request the page makes; React replaces the static text on mount, so with the data calls blocked Google indexes
@@ -809,9 +814,14 @@ Rules:
 * /about: banner-style two-line title (`about.title1/2`, same `.banner__line` reveal as home), the home `.numbers` strip,
   three feature cards (brass 01–03), the stream card in **Twitch purple** (tokens `--twitch-rgb` / `--twitch-hi-rgb` —
   Twitch's colour, used only there, like the Steam button's steel) and the data card with the partner plaque.
-* Numbers: `<CountUp>`; bars: animate `width` from 0.
+* Numbers: `<CountUp>`; bars: animate `width` from 0. **Crawlers (UA with bot / crawl / spider / headless / lighthouse)
+  and reduced-motion users get the final number from the first render** (`STILL_NUMBERS` in `UI.tsx`): Google's renderer
+  snapshots before the count ends, and indexed "Win rate 0.00% · Matches 0" on item pages and "7.81%" instead of 49% on
+  hero pages. Never show a key number only through an animation that starts at 0.
 * `prefers-reduced-motion` is respected globally in `base.css`.
 * Note: when the preview browser pane is hidden, rAF is throttled and animations freeze mid-way (half-transparent text, partial count-ups). That's an artefact of the tool, not a bug.
+  To see what Googlebot renders, use headless Chrome with its user agent and virtual time:
+  `chrome --headless=new --user-agent="…Googlebot/2.1…" --virtual-time-budget=20000 --dump-dom <url>`.
 
 ### Internationalisation (EN / UA / DE / ES / RU)
 * **Every UI string goes through `useT()`** — never put text straight into JSX. Add the key to `i18n/en.ts`
@@ -972,7 +982,7 @@ Rules:
 
 ## 2. Поточний стан
 
-> Оновлено 17.11.2026 (вікі: карта).
+> Оновлено 19.11.2026 (розбір індексації Google, лічильники для ботів, sitemap за типами).
 
 | Що | Стан |
 |---|---|
@@ -983,10 +993,10 @@ Rules:
 | Google Search Console | ✅ Domain property `deadbuff.net` підтверджено (TXT у DNS). Sitemap: «Успішно», знайдено 452 сторінки |
 | Bing Webmaster Tools | ⏳ Власник робив імпорт з GSC; sitemap підтягнувся як 0 → треба вручну додати `https://deadbuff.net/sitemap.xml` |
 | Щоденне оновлення | ✅ GitHub Action `Daily rebuild` перевірено ручним запуском — успішно |
-| Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47, «Сторінка з переспрямуванням» 1. Причина: robots.txt блокував `/api/`, тож Google рендерив сторінки без даних. Фікс `Allow: /api/dl/` задеплоєно 16.11 (`1777df3`) — розділ 6, п. 22. Власнику: «Перевірити виправлення» в GSC |
+| Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47 → фікс robots.txt (розділ 6, п. 22). 19.11: «Проскановано – не проіндексовано» 192 (перевірка — «Помилка»), «Виявлено – не проіндексовано» 957, «Переспрямування» 3, «Альтернативна з canonical» 1. Знайдено: Googlebot бачив на сторінках предметів «вінрейт 0.00% · матчі 0», на героях — проміжні цифри анімації. Виправлено локально 19.11 + sitemap розбито на 5 файлів за типами сторінок (розділ 6, п. 30), **ще не закомічено** |
 | Партнерство | ✅ Deadbuff — офіційний партнер Deadlock API (іконка серед трекерів на deadlock-api.com, поки без посилання) |
 | Швидкість головної | ✅ 17.11: на телефонах вітрина без важкого фону (−4 МБ), запушено (розділ 6, п. 25) |
-| Статистика сайту `/admin` | ✅ Запушено 17.11 (перевірено локально з wrangler + D1). **Власнику:** `ADMIN_USERS` = свій SteamID64 у Cloudflare (розділ 3 → «Бекенд», крок 6), увійти через Steam. 18.11: власні перегляди, входи й «активність» власника не рахуються; новий блок «Візити детально» (сесії, хто що відкривав, джерела, країни, пристрої) — розділ 6, п. 29. Перевірено локально (wrangler + D1, 375px), ще не закомічено |
+| Статистика сайту `/admin` | ✅ Запушено 17.11 (перевірено локально з wrangler + D1). **Власнику:** `ADMIN_USERS` = свій SteamID64 у Cloudflare (розділ 3 → «Бекенд», крок 6), увійти через Steam. 18.11: власні перегляди, входи й «активність» власника не рахуються; новий блок «Візити детально» (сесії, хто що відкривав, джерела, країни, пристрої) — розділ 6, п. 29. Перевірено локально (wrangler + D1, 375px), запушено 18.11 (`541ec54`) |
 | Аналітика | Cloudflare Web Analytics: **Workers & Pages → deadbuff → Metrics** (зняти фільтр «Site is in deadbuff.pages.dev», інакше видно лише pages.dev). За 13–16.11: 41 відвідування, 208 переглядів, топ — `/builds`, `/`, `/heroes` |
 | Деплой 16.11 | ✅ Запушено 16.11: новий драфт-помічник, сторінки `/counters`, блок драфту на головній, свайп вітрини й «Зрізу мети» на телефоні, партнер у футері, текст про ingest tool, сторінка `/about` зі стрімом власника. Збірка проходить (2160 сторінок), перевірено в браузері (EN/UA/DE, 375px) |
 | Вікі `/wiki` | ✅ 17.11: «Карта» + 5 статей (душі й рівні, магазин, бій і рух, ранги, словник), закріплена смуга розділів. Перевірено локально (UA/DE, 375px, 1440px), збірка — 2190 сторінок. Запушено 17.11 разом із SEO вікі (h1, якорі, JSON-LD, футер). **Власнику:** перечитати тексти механік (розділ 9, п. 0a3) і попросити індексацію в GSC (розділ 5) |
@@ -1062,8 +1072,8 @@ Rules:
 
 Деталі — Частина I, §3–4. Суть:
 - `npm run build` = `tsc -b` → `vite build` → `tsx scripts/prerender.ts`
-- Prerender тягне дані з API під час білду і пише в `dist/`: HTML на кожен маршрут × мову, `sitemap.xml`,
-  `robots.txt`, `app.html` (чиста оболонка SPA), `_redirects`
+- Prerender тягне дані з API під час білду і пише в `dist/`: HTML на кожен маршрут × мову, `sitemap.xml` (індекс)
+  + `sitemap-pages/heroes/counters/items/wiki.xml`, `robots.txt`, `app.html` (чиста оболонка SPA), `_redirects`
 - Cloudflare Pages: `/heroes/haze` → `heroes/haze.html` (pretty URLs), `*.html` → 308 на URL без розширення
 - `_redirects`: `/players/*`, `/matches/*`, `/me`, `/login`, `/account`, `/compare` (+ `/uk/…` тощо) → `/app` 200
   (rewrite). **Ціль саме `/app`, не `/app.html`**
@@ -1084,6 +1094,11 @@ Rules:
 - Статичний текст сторінки всередині `#root` (`.seo-static`) — React замінює його після завантаження
 - sitemap (1930 URL) і robots, сторінки віддають 200 навіть для Googlebot (перевірено 16.11: усі 1930 — 200)
 - robots.txt дозволяє `/api/dl/` — без цього Google рендерить сторінки без даних (розділ 6, п. 22). **Не прибирати**
+- Цифри-лічильники (вінрейт, пікрейт, матчі в шапці героя / предмета) для ботів одразу справжні, без анімації з нуля
+  (розділ 6, п. 30)
+- `sitemap.xml` — індекс із 5 файлів: `sitemap-pages.xml` (60: головна, списки, драфт, about…), `sitemap-heroes.xml`
+  (1100: герої з вкладками), `sitemap-counters.xml` (220), `sitemap-items.xml` (780), `sitemap-wiki.xml` (30). У GSC:
+  «Файли Sitemap» → файл → «Переглянути індексування сторінок» — видно, який тип сторінок Google не бере
 - Сторінки контрпіків `/counters/:slug` (44 герої × 5 мов) під запити «who counters haze», «haze counter deadlock»,
   «контрпік Імла». Посилання на них — з драфту, з вкладки «Матчапи» героя, з головної
 - **Вікі (17.11):** 6 статей × 5 мов = 30 сторінок у sitemap, у кожної свій title / description, h1 «Вікі Deadlock — …»,
@@ -1105,6 +1120,20 @@ Rules:
 - Нові сторінки (предмети, матчі, патчі) = нові входи з Google — див. розділ 11
 - Після деплою вікі: у Search Console «Перевірка URL» → запит на індексування для `/wiki`, `/wiki/souls`, `/wiki/ranks`,
   `/uk/wiki` (ліміт ≈ 10 на день), решту Google знайде сам через sitemap і футер
+
+**Як читати звіт «Індексування сторінок» (розбір 19.11):**
+- «Сторінка з переспрямуванням» — `http://`, `www.` і адреси зі слешем у кінці (308 на адресу без слеша). Норма, внутрішні
+  посилання й sitemap на них не ведуть. «Перевірити виправлення» тут завжди дає «Помилка» — не натискати
+- «Альтернативна сторінка з належним тегом канонічної сторінки» — адреса з параметрами (напр. `/draft?e=…`), canonical
+  веде на чисту. Норма
+- «Виявлено – наразі не проіндексовано» — Google знає адресу, але ще не заходив. Для нового домену з ~2190 адресами
+  це черга: Google сканує новий сайт порціями і пришвидшує, коли бачить посилання на сайт і живих відвідувачів
+- «Проскановано – наразі не проіндексовано» — заходив і поки вирішив не індексувати (якість / дублі / новий домен). Це не
+  помилка, тому «Перевірити виправлення» часто закінчується «Помилкою» — Google просто ще не передумав. Дивитись
+  приклади адрес і дату сканування: до 16.11 — старий robots.txt, до деплою п. 30 — нулі в цифрах
+- Сторінки × 5 мов: 1880 з 2190 адрес — шаблонні (герої з вкладками, предмети, контрпіки). Якщо через місяць після
+  деплою п. 30 у `sitemap-items.xml` майже нічого не проіндексовано, варто обговорити (питання власнику): прибрати
+  з sitemap предмети або de/es/ru-версії шаблонних сторінок, щоб Google витрачав сканування на героїв, контрпіки й вікі
 
 ---
 
@@ -1223,6 +1252,18 @@ Rules:
     - головна: блок «Кого пікнути проти цього складу» (6 найпопулярніших героїв як ворожий склад → драфт), чип у банері
     - мобілка: вітрину «#N у меті» можна гортати свайпом; три панелі «Зрізу мети» — горизонтальна стрічка зі свайпом
     - текст на профілі гравця: замість «додай бота в Steam» — ingest tool (deadlock-api.com/ingest-cache)
+30. **19.11 — Search Console: «Проскановано – не проіндексовано» 192, «Виявлено – не проіндексовано» 957.**
+    Власник прислав звіт; доступу до GSC у сесії не було, тому перевірено сам сайт. robots.txt, коди відповідей
+    (усе 200, редиректи лише `http`/`www`/слеш), canonical/hreflang і посилання — у порядку. Знайдено: рендер як
+    Googlebot (headless Chrome з його юзер-агентом і віртуальним часом, як у Google) показував на
+    `/items/express-shot` «Win rate 0.00% · Pick rate 0.0% · Matches 0», а на `/heroes/vindicta` — «7.81% · KDA 0.50»
+    замість 49.29% / 3.12: лічильник `<CountUp>` стартує з нуля, і Google знімає сторінку посеред анімації. Тобто
+    відрендерена сторінка суперечила title/description («вінрейт 53.8%») і виглядала зламаною. Виправлено: боти й
+    `prefers-reduced-motion` одразу бачать справжні числа (`STILL_NUMBERS` у `UI.tsx`), для людей анімація та сама.
+    Заодно: час «20:60» / «10:60» (округлення лише секунд) — у `fmtTime` і в пререндері (`mmss`). `sitemap.xml`
+    став індексом із 5 файлів за типами сторінок (розділ 5). Перевірено локально (збірка 2190 сторінок, рендер як
+    Googlebot до / після). **Власнику після деплою:** у GSC «Файли Sitemap» перевідправити `sitemap.xml` (підхопить 5
+    файлів), запит на індексування для `/items/express-shot`, `/heroes/haze`, `/counters/haze`
 29. **18.11 — статистика без власника + візити детально.** Запит: «щоб моя статистика не показувалась (з мого
     акаунта)» і «трекати, хто на які сторінки заходить — з однією сесією чи з різними, щоб бачити, що перегляди не
     накручують»; старий розділ «Відвідування» лишити, детальніше — нижче. Зроблено: `/api/nav` не рахує акаунти з
@@ -1484,6 +1525,8 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   ліміт функцій) — Google бачить скелетон. Перевірка: Search Console → Перевірка URL → «Перевірити URL у реальному часі»
   → «Переглянути перевірену сторінку» → знімок екрана і «Ресурси сторінки» (нічого не має бути «Заблоковано robots.txt»
   з `/api/dl/`)
+- Google знімає сторінку, не чекаючи кінця анімацій: число, що «набігає» з нуля, він бачить як 0 або проміжне.
+  Для ботів лічильники вже без анімації (розділ 6, п. 30) — нові анімовані цифри робити так само
 - Якщо в когось сайт «не відкривається» (`NXDOMAIN`), а 1.1.1.1 / 8.8.8.8 домен бачать — це кеш DNS роутера
   або провайдера: перезапуск роутера або «Безпечний DNS» у Chrome
 
@@ -1526,3 +1569,5 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   (§4 файли й маршрути, §6 `/assets/map` і `/assets/npc-units`, §8 дизайн вікі)
 - **17.11.2026 (третя частина)** — Twitch-набір для каналу BethakZS у `twitch-kit/` (панелі, банери, плашка OBS,
   поради щодо Social Links і біо); оновлено розділ 2
+- **19.11.2026** — розбір звіту GSC (192 / 957), лічильники без анімації для ботів, час без «:60», sitemap-індекс із
+  5 файлів (розділ 6, п. 30); оновлено розділи 2, 4, 5, 12 і Частину I (§4 файли й SEO prerender, §8 числа)

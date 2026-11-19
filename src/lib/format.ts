@@ -33,8 +33,10 @@ export const fmtDelta = (ratio: number, digits = 1) => `${ratio >= 0 ? '+' : 'âˆ
 export const fmtSouls = (n: number) => (n >= 1000 ? `${fixed(n / 1000, n >= 10000 ? 0 : 1)}k` : `${Math.round(n)}`);
 
 export const fmtTime = (seconds: number) => {
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
+  // round the total first: rounding only the remainder turned 1259.7 s into "20:60"
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total - m * 60;
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 

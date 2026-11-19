@@ -42,6 +42,13 @@ const SITE_URL = (process.env.SITE_URL ?? '').replace(/\/+$/, '');
 const DICTS: Record<Lang, Record<MsgKey, unknown>> = { en, uk, de, es, ru };
 const HERO_TABS = ['overview', 'builds', 'items', 'matchups', 'lore'] as const;
 type HeroTab = (typeof HERO_TABS)[number];
+/** sitemap-<name>.xml per page kind (route path without the language prefix); everything else → sitemap-pages.xml */
+const SITEMAP_GROUPS: [string, RegExp][] = [
+  ['heroes', /^\/heroes\/[^/]+/],
+  ['counters', /^\/counters\/[^/]+/],
+  ['items', /^\/items\/[^/]+/],
+  ['wiki', /^\/wiki(\/|$)/],
+];
 
 /* ------------------------------ helpers ----------------------------- */
 
@@ -274,7 +281,10 @@ function itemText(item: Item): string {
   return stripHtml(parts.length ? parts.join(' ') : item.description?.desc ?? '');
 }
 
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const mmss = (s: number) => {
+  const total = Math.round(s); // rounding only the remainder gave "10:60"
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
 
 /** Context for a declarative wiki article (lib/wiki.ts) in one language — the same texts the app renders. */
 function wikiCtx(d: Data, lang: Lang): WikiCtx {
@@ -939,17 +949,30 @@ async function main() {
   const robots = 'User-agent: *\nAllow: /\nAllow: /api/dl/\nDisallow: /api/\n';
   const today = new Date().toISOString().slice(0, 10);
   if (SITE_URL) {
-    const urls = list.flatMap((page) =>
-      LANGS.map(
+    // sitemap.xml is an index of one sitemap per page kind: Search Console then reports indexing per file
+    // (Sitemaps → a file → "See page indexing"), so it is visible which kind of page Google leaves out.
+    const groupOf = (path: string) => SITEMAP_GROUPS.find(([, re]) => re.test(path))?.[0] ?? 'pages';
+    const groups = new Map<string, string[]>();
+    for (const page of list) {
+      const entries = LANGS.map(
         (l) =>
           `  <url><loc>${esc(abs(pathForLang(page.path, l.id)))}</loc><lastmod>${today}</lastmod>${LANGS.map(
             (alt) => `<xhtml:link rel="alternate" hreflang="${alt.locale}" href="${esc(abs(pathForLang(page.path, alt.id)))}"/>`,
           ).join('')}</url>`,
-      ),
-    );
+      );
+      const name = groupOf(page.path);
+      groups.set(name, [...(groups.get(name) ?? []), ...entries]);
+    }
+    for (const [name, urls] of groups)
+      await write(
+        `sitemap-${name}.xml`,
+        `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls.join('\n')}\n</urlset>\n`,
+      );
     await write(
       'sitemap.xml',
-      `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls.join('\n')}\n</urlset>\n`,
+      `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${[...groups.keys()]
+        .map((name) => `  <sitemap><loc>${esc(abs(`/sitemap-${name}.xml`))}</loc><lastmod>${today}</lastmod></sitemap>`)
+        .join('\n')}\n</sitemapindex>\n`,
     );
     await write('robots.txt', `${robots}\nSitemap: ${SITE_URL}/sitemap.xml\n`);
   } else {

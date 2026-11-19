@@ -93,12 +93,25 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 /* ------------------------------ count-up number ------------------------- */
+/**
+ * Crawlers and reduced-motion users get the final number from the first render. The count starts at 0 and
+ * only climbs while animation frames run, so a renderer that snapshots early (or never ticks) saw
+ * "Win rate 0.00% · Matches 0" on item pages instead of the real numbers.
+ */
+const STILL_NUMBERS =
+  typeof window !== 'undefined' &&
+  (/bot|crawl|spider|slurp|lighthouse|headless/i.test(navigator.userAgent) || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+
 export function CountUp({ value, format, duration = 1.1 }: { value: number; format: (n: number) => string; duration?: number }) {
   const ref = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true });
-  const mv = useMotionValue(0);
+  const mv = useMotionValue(STILL_NUMBERS ? value : 0);
   const text = useTransform(mv, (v) => format(v));
   useEffect(() => {
+    if (STILL_NUMBERS) {
+      mv.set(value);
+      return;
+    }
     if (!inView) return;
     const controls = animate(mv, value, { duration, ease: [0.22, 1, 0.36, 1] });
     return () => controls.stop();
