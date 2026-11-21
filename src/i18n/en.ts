@@ -32,6 +32,11 @@ export const en = {
   'meta.hero.matchups': '{name} Counters & Matchups — Deadlock | Deadbuff',
   'meta.hero.lore': '{name} Lore — Deadlock | Deadbuff',
   'meta.desc.hero': '{name} build for Deadlock — community builds ranked by real win rate, skill order, core items and counters · current win rate {wr}',
+  // one description per hero tab (shared ones made Google treat the five tabs as duplicates)
+  'meta.desc.hero.builds': 'Best {name} builds in Deadlock — top community builds with every item by category, ranked by real win rate · {name} win rate now {wr}',
+  'meta.desc.hero.items': 'What to buy on {name} in Deadlock — win rate, pick rate and average buy minute of every item on {name}, core items first · current win rate {wr}',
+  'meta.desc.hero.matchups': '{name} matchups in Deadlock — win rate against every enemy hero, who {name} beats, who counters {name} and the best and worst teammates',
+  'meta.desc.hero.lore': '{name} lore in Deadlock — the full backstory and playstyle of {name}, plus abilities, builds and current win rate {wr}',
 
   /* nav / layout */
   'nav.heroes': 'Heroes',
@@ -130,6 +135,10 @@ export const en = {
   'build.expand': 'Expand build',
   'build.collapse': 'Collapse build',
   'build.section': 'Section {n}',
+  'build.cat.early': 'Early game',
+  'build.cat.lane': 'Laning',
+  'build.cat.mid': 'Mid game',
+  'build.cat.late': 'Late game',
   'build.abilityOrder': 'Ability order',
   'build.copied': 'Copied ✓',
   'build.copy': 'Copy build ID · {id}',

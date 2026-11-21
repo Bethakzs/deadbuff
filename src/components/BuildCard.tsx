@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useMemo, useState } from 'react';
 import { useBuildTags, useItems } from '../hooks/useAssets';
 import { useT } from '../i18n';
+import { buildCategoryName } from '../lib/builds';
 import { fmtCompact } from '../lib/format';
 import { itemImage } from '../lib/items';
 import type { Hero, HeroBuild, HeroBuildStat, Item, SteamProfile } from '../lib/types';
@@ -192,7 +193,7 @@ export function BuildCard({ build, stat, profile, abilities, hero, rank, default
                   .map((cat, ci) => (
                     <section key={ci} className="build-cat">
                       <header>
-                        <h4>{cat.name || t('build.section', { n: ci + 1 })}</h4>
+                        <h4>{buildCategoryName(cat.name, ci, t)}</h4>
                         {cat.description && <p>{cat.description}</p>}
                       </header>
                       <div className="build-cat__items">

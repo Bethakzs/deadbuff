@@ -26,6 +26,7 @@ import { es } from '../src/i18n/es';
 import { ru } from '../src/i18n/ru';
 import { LANGS, pathForLang, type Lang } from '../src/i18n/types';
 import { uk } from '../src/i18n/uk';
+import { buildCategoryName } from '../src/lib/builds';
 import { buildHeroRows, heroSlug, roleOf, type HeroRow, type Tier } from '../src/lib/heroes';
 import { loreParagraphs, stripHtml } from '../src/lib/html';
 import { countersOf, itemsVsLineup, pairIndex } from '../src/lib/draft';
@@ -347,6 +348,10 @@ function wikiBlockHtml(d: Data, lang: Lang, c: WikiCtx, b: Block): string {
 
 /** Links to every wiki article (static pages link to each other, like the tabs on the page). */
 const wikiTabs = (lang: Lang) => `<ul>${ARTICLES.map((x) => `<li>${link(lang, articlePath(x), t(lang, x.tab))}</li>`).join('')}</ul>`;
+
+/** The app's footer links on every static page (wiki articles, counter guides, about) — the same links Google sees after rendering. */
+const footBlock = (lang: Lang) =>
+  `<footer><h2>${esc(t(lang, 'nav.wiki'))}</h2>${wikiTabs(lang)}<p>${link(lang, '/counters', t(lang, 'ctr.eyebrow'))} · ${link(lang, '/about', t(lang, 'nav.about'))}</p></footer>`;
 
 /**
  * Structured data for a wiki page: an Article about Deadlock (author = the owner, BethakZS) + breadcrumbs
@@ -717,6 +722,8 @@ function pages(d: Data): PageDef[] {
       .slice(0, 10);
     const from = (item.component_items ?? []).map((c) => listed.find((x) => x.item.class_name === c)).filter((x): x is { item: Item; slug: string } => !!x);
     const into = listed.filter((x) => x.item.component_items?.includes(item.class_name));
+    // the rest of its shop column (same slot and tier) — item pages link to each other, not only up to heroes
+    const siblings = listed.filter((x) => x.item.id !== item.id && x.item.item_slot_type === item.item_slot_type && x.item.item_tier === item.item_tier);
     list.push({
       path: `/items/${slug}`,
       title: (l) => t(l, 'meta.item', { name: localItem(l).name }),
@@ -740,12 +747,21 @@ function pages(d: Data): PageDef[] {
                 .join('')}</ul>`
             : '') +
           (from.length ? `<h2>${esc(t(l, 'ip.buildsFrom'))}</h2>${itemLinks(from)}` : '') +
-          (into.length ? `<h2>${esc(t(l, 'ip.buildsInto'))}</h2>${itemLinks(into)}` : '')
+          (into.length ? `<h2>${esc(t(l, 'ip.buildsInto'))}</h2>${itemLinks(into)}` : '') +
+          (siblings.length ? `<h2>${esc(slot)}${item.item_tier ? ` · ${esc(t(l, 'item.tierShort', { n: item.item_tier }))}` : ''}</h2>${itemLinks(siblings)}` : '')
         );
       },
     });
   }
 
+
+  // item names in any language by id (hero item lists, builds); links only to items that have a page
+  const enItemById = new Map([...d.local.en.items.values()].map((i) => [i.id, i]));
+  const itemNameIn = (l: Lang, id: number) => {
+    const en = enItemById.get(id);
+    return en ? (d.local[l].items.get(en.class_name)?.name ?? en.name) : '';
+  };
+  const itemRef = (l: Lang, id: number) => (slugOf.has(id) ? link(l, `/items/${slugOf.get(id)}`, itemNameIn(l, id)) : esc(itemNameIn(l, id)));
 
   for (const hero of d.heroes) {
     const row = d.rows.find((r) => r.hero.id === hero.id);
@@ -754,12 +770,38 @@ function pages(d: Data): PageDef[] {
       const h = heroText(d, hero, l);
       return t(l, `meta.hero.${tab}` as MsgKey, { name: h.name, en: h.en });
     };
-    const description = (l: Lang) => {
+    // one description per tab — the same keys as HeroPage's useDocumentMeta()
+    const descOf = (l: Lang, tab: HeroTab) => {
       const h = heroText(d, hero, l);
-      return t(l, 'meta.desc.hero', { name: h.name, en: h.en, wr: row ? pct(l, row.winRate) : '—' });
+      return t(l, (tab === 'overview' ? 'meta.desc.hero' : `meta.desc.hero.${tab}`) as MsgKey, { name: h.name, en: h.en, wr: row ? pct(l, row.winRate) : '—' });
     };
     const tabNav = (l: Lang) =>
       `<nav>${HERO_TABS.map((tab) => link(l, tab === 'overview' ? base : `${base}/${tab}`, t(l, `hero.tab.${tab}` as MsgKey))).join('')}</nav>`;
+    // what this hero buys, as on the Items tab: share of its games with the item, win rate with it, average buy minute
+    const hs = heroStat.get(hero.id);
+    const bought = hs?.matches
+      ? d.itemByHero
+          .filter((r) => r.bucket === hero.id && r.matches > 0 && slugOf.has(r.item_id))
+          .map((r) => ({ id: r.item_id, share: r.matches / hs.matches, wr: r.wins / r.matches, buy: r.avg_buy_time_s }))
+          .sort((a, b) => b.share - a.share)
+      : [];
+    const itemLi = (l: Lang, x: (typeof bought)[number]) => {
+      const it = enItemById.get(x.id);
+      const slot = it?.item_slot_type ? t(l, `slot.${it.item_slot_type}` as MsgKey) : '';
+      return `<li>${itemRef(l, x.id)} — ${esc(slot)}${it?.item_tier ? ` · ${esc(t(l, 'item.tierShort', { n: it.item_tier }))}` : ''} · ${esc(t(l, 'stat.pickRate'))} ${pct(l, x.share)} · ${esc(
+        t(l, 'stat.winRate'),
+      )} ${pct(l, x.wr)}${x.buy ? ` · ${esc(t(l, 'stat.avgBuy'))} ${mmss(x.buy)}` : ''}</li>`;
+    };
+    const res = ctr.get(hero.id) ?? { counters: [], victims: [] };
+    const sameRole = d.heroes.filter((h) => h.id !== hero.id && roleOf(h) === roleOf(hero));
+    /** Counter guide + the other heroes of the same class — every tab links out, not only to its siblings. */
+    const related = (l: Lang) =>
+      `<p>${link(l, `/counters/${hero.slug}`, t(l, 'ctr.linkName', { name: heroText(d, hero, l).name }))} · ${link(l, '/draft', t(l, 'nav.draft'))}</p>` +
+      (sameRole.length
+        ? `<h2>${esc(t(l, 'nav.heroes'))} · ${esc(t(l, `role.${roleOf(hero)}` as MsgKey))}</h2><ul>${sameRole
+            .map((h) => `<li>${link(l, `/heroes/${h.slug}`, heroText(d, h, l).name)}</li>`)
+            .join('')}</ul>`
+        : '');
     const intro = (l: Lang, tab: HeroTab) => {
       const h = heroText(d, hero, l);
       const stats = row
@@ -770,7 +812,7 @@ function pages(d: Data): PageDef[] {
         : '';
       return `<h1>${esc(headline(titleOf(l, tab)))}</h1>${h.description.role ? `<p><em>${esc(h.description.role)}</em></p>` : ''}<p>${esc(
         t(l, `role.${roleOf(hero)}` as MsgKey),
-      )}${h.tags.length ? ` · ${esc(h.tags.join(' · '))}` : ''}</p>${stats}${tabNav(l)}`;
+      )}${h.tags.length ? ` · ${esc(h.tags.join(' · '))}` : ''}</p>${stats}${tabNav(l)}${navBlock(l)}`;
     };
     const abilities = (l: Lang) => {
       const items = d.local[l].items;
@@ -788,62 +830,105 @@ function pages(d: Data): PageDef[] {
         .join('');
     };
     const image = hero.images.icon_hero_card ?? fallbackImage;
+    /** A community build as text: name, the author's note, every item by category (items link to their pages). */
+    const buildHtml = (l: Lang, b: HeroBuild) => {
+      const hb = b.hero_build;
+      const note = hb.description ? stripHtml(hb.description).replace(/\s+/g, ' ').trim() : '';
+      const isShop = (id: number) => {
+        const it = enItemById.get(id);
+        return !!it && isShopItem(it);
+      };
+      // same numbering as BuildCard: categories with items, "#Citadel_…" game tokens translated
+      const cats = (hb.details?.mod_categories ?? [])
+        .filter((c) => c.mods?.length)
+        .map((c, i) => ({ name: buildCategoryName(c.name, i, (k, v) => t(l, k, v)), ids: [...new Set(c.mods.map((m) => m.ability_id))].filter(isShop) }))
+        .filter((c) => c.ids.length);
+      return (
+        `<h3>${esc(hb.name || t(l, 'build.untitled'))}</h3>${note ? `<p>${esc(note.length > 280 ? `${note.slice(0, 277)}…` : note)}</p>` : ''}` +
+        (cats.length ? `<ul>${cats.map((c) => `<li><b>${esc(c.name)}</b>: ${c.ids.map((id) => itemRef(l, id)).join(', ')}</li>`).join('')}</ul>` : '') +
+        `<p>ID ${hb.hero_build_id}</p>`
+      );
+    };
+    // win rate against every enemy hero (hero-counter-stats), best first
+    const vs = d.counters
+      .filter((c) => c.hero_id === hero.id && c.matches_played > 0)
+      .map((c) => ({ other: d.heroes.find((h) => h.id === c.enemy_hero_id), wr: c.wins / c.matches_played, games: c.matches_played }))
+      .filter((x): x is { other: Hero; wr: number; games: number } => !!x.other)
+      .sort((a, b) => b.wr - a.wr);
 
     list.push(
       {
         path: base,
         title: (l) => titleOf(l, 'overview'),
-        description,
+        description: (l) => descOf(l, 'overview'),
         image,
-        body: (l) => `${intro(l, 'overview')}<h2>${esc(t(l, 'hero.abilities'))}</h2>${abilities(l)}`,
+        body: (l) => {
+          const name = heroText(d, hero, l).name;
+          return (
+            `${intro(l, 'overview')}<h2>${esc(t(l, 'hero.abilities'))}</h2>${abilities(l)}` +
+            (bought.length
+              ? `<h2>${esc(t(l, 'hi.title'))}</h2><ul>${bought.slice(0, 6).map((x) => itemLi(l, x)).join('')}</ul><p>${link(l, `${base}/items`, t(l, 'hi.eyebrow', { name }))}</p>`
+              : '') +
+            (res.counters.length
+              ? `<h2>${esc(t(l, 'ctr.best'))}</h2><ul>${res.counters
+                  .slice(0, 3)
+                  .map((x) => `<li>${link(l, `/heroes/${x.hero.slug}`, heroText(d, x.hero, l).name)} +${pct(l, x.fx.delta)}</li>`)
+                  .join('')}</ul>`
+              : '') +
+            `<p>${link(l, `${base}/builds`, t(l, 'hb.eyebrow', { name }))}</p>${related(l)}`
+          );
+        },
       },
       {
         path: `${base}/builds`,
         title: (l) => titleOf(l, 'builds'),
-        description,
+        description: (l) => descOf(l, 'builds'),
         image,
-        body: (l) => {
-          const builds = d.builds.get(hero.id) ?? [];
-          return `${intro(l, 'builds')}<h2>${esc(t(l, 'hb.title'))}</h2><ul>${builds
-            .map((b) => `<li>${esc(b.hero_build.name || t(l, 'build.untitled'))} — ID ${b.hero_build.hero_build_id}</li>`)
-            .join('')}</ul><p>${esc(t(l, 'build.copyHint'))}</p>`;
-        },
+        body: (l) =>
+          `${intro(l, 'builds')}<h2>${esc(t(l, 'hb.title'))}</h2>${(d.builds.get(hero.id) ?? []).map((b) => buildHtml(l, b)).join('')}<p>${esc(
+            t(l, 'build.copyHint'),
+          )}</p>${related(l)}`,
       },
       {
         path: `${base}/items`,
         title: (l) => titleOf(l, 'items'),
-        description,
+        description: (l) => descOf(l, 'items'),
         image,
-        body: (l) => `${intro(l, 'items')}<p>${esc(t(l, 'items.sub'))}</p>`,
+        body: (l) =>
+          `${intro(l, 'items')}<h2>${esc(t(l, 'hi.title'))}</h2><ul>${bought
+            .slice(0, 40)
+            .map((x) => itemLi(l, x))
+            .join('')}</ul>${related(l)}`,
       },
       {
         path: `${base}/matchups`,
         title: (l) => titleOf(l, 'matchups'),
-        description,
+        description: (l) => descOf(l, 'matchups'),
         image,
         body: (l) => {
-          const vs = d.counters
-            .filter((c) => c.hero_id === hero.id && c.matches_played > 0)
-            .map((c) => ({ other: d.heroes.find((h) => h.id === c.enemy_hero_id), wr: c.wins / c.matches_played }))
-            .filter((x): x is { other: Hero; wr: number } => !!x.other)
-            .sort((a, b) => b.wr - a.wr);
-          const li = (x: { other: Hero; wr: number }) =>
-            `<li>${link(l, `/heroes/${x.other.slug}`, heroText(d, x.other, l).name)} — ${pct(l, x.wr)}</li>`;
-          return `${intro(l, 'matchups')}<h2>${esc(t(l, 'hero.strongVs'))}</h2><ul>${vs.slice(0, 5).map(li).join('')}</ul><h2>${esc(
-            t(l, 'hero.weakVs'),
-          )}</h2><ul>${vs.slice(-5).reverse().map(li).join('')}</ul>`;
+          const li = (x: (typeof vs)[number]) =>
+            `<li>${link(l, `/heroes/${x.other.slug}`, heroText(d, x.other, l).name)} — ${pct(l, x.wr)} · ${x.games} ${esc(t(l, 'ctr.games'))}</li>`;
+          return (
+            `${intro(l, 'matchups')}<h2>${esc(t(l, 'hero.strongVs'))}</h2><ul>${vs.slice(0, 5).map(li).join('')}</ul><h2>${esc(t(l, 'hero.weakVs'))}</h2><ul>${vs
+              .slice(-5)
+              .reverse()
+              .map(li)
+              .join('')}</ul>` +
+            `<p>${link(l, `/counters/${hero.slug}`, t(l, 'ctr.fullGuide', { name: heroText(d, hero, l).name }))}</p>` +
+            `<h2>${esc(t(l, 'hm.titleVs'))}</h2><ul>${vs.map(li).join('')}</ul>${related(l)}`
+          );
         },
       },
       {
         path: `${base}/lore`,
         title: (l) => titleOf(l, 'lore'),
-        description,
+        description: (l) => descOf(l, 'lore'),
         image,
         body: (l) => {
           const h = heroText(d, hero, l);
           return `${intro(l, 'lore')}${loreParagraphs(h.description.lore)
             .map((p) => `<p>${esc(stripHtml(p))}</p>`)
-            .join('')}${h.description.playstyle ? `<h2>${esc(t(l, 'lore.playstyle'))}</h2><p>${esc(stripHtml(h.description.playstyle))}</p>` : ''}`;
+            .join('')}${h.description.playstyle ? `<h2>${esc(t(l, 'lore.playstyle'))}</h2><p>${esc(stripHtml(h.description.playstyle))}</p>` : ''}${related(l)}`;
         },
       },
     );
@@ -900,7 +985,7 @@ function render(template: string, page: PageDef, lang: Lang) {
     .replace(/<title>[\s\S]*?<\/title>/, `<title>${esc(title)}</title>`)
     .replace(/<meta name="description" content="[^"]*" \/>/, `<meta name="description" content="${esc(description)}" />`)
     .replace('</head>', `    ${head.join('\n    ')}\n  </head>`)
-    .replace('<div id="root"></div>', `<div id="root"><div class="seo-static container">${page.body(lang)}</div></div>`);
+    .replace('<div id="root"></div>', `<div id="root"><div class="seo-static container">${page.body(lang)}${footBlock(lang)}</div></div>`);
 }
 
 async function write(file: string, content: string) {

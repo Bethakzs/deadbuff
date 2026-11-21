@@ -24,6 +24,8 @@ function detect(): Lang {
   const { pathname, search, hash } = window.location;
   const fromPath = langFromPath(pathname);
   if (fromPath !== 'en') return fromPath;
+  // A crawler must index the URL it asked for in that URL's language, whatever its storage or locale says
+  if (/bot|crawl|spider|slurp|lighthouse|headless/i.test(navigator.userAgent)) return 'en';
   let saved: string | null = null;
   try {
     saved = localStorage.getItem(STORAGE_KEY);

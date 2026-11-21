@@ -319,7 +319,7 @@ src/
     lanes.ts               lane list from lane_info + bestLane() — only for the header chip "Best lane: …"
     items.ts               slots, property formatting, ability key stats + upgrade text, item tooltip data
     format.ts              locale-aware number/percent/time formatting (setFormatLocale), wrTone() colour scale
-    builds.ts              BUILD_STEP (10 revealed per "Show more"), BUILD_PAGE (50 per API page), uniqueBuilds()
+    builds.ts              BUILD_STEP (10 revealed per "Show more"), BUILD_PAGE (50 per API page), uniqueBuilds(), buildCategoryName() (game tokens like "#Citadel_HeroBuilds_EarlyGame" → "Early game", also in the prerender)
     html.ts                sanitizeHtml() for API description fragments (strips scripts/on* handlers) + trimDot(),
                            loreParagraphs() (lore is split by "
 " OR "<br><br>" depending on the hero)
@@ -481,7 +481,7 @@ src/
 `basename` (`main.tsx` → `Routed`), so in-app links are always written WITHOUT the prefix (`to="/heroes/haze"`).
 Switching language rewrites the URL (`pathForLang`) and remounts the router. On a first visit whose browser
 language (top choice) is one we support — or with a saved choice — an English URL is moved to that language's
-prefix; crawlers always get the URL they requested.
+prefix; crawlers (UA with bot / crawl / spider / headless, checked in `detect()`) always get the URL they requested, in that URL's language, whatever their storage says.
 
 ### SEO prerender (`scripts/prerender.ts`, runs in `npm run build`)
 Writes a static HTML file for every public route × language (≈432 routes × 5 ≈ 2160 pages: the old 226 + a page per shop item that has stats in the last 7 days (~156) +
@@ -490,12 +490,19 @@ description (same `meta.*` dictionary keys as the runtime `useDocumentMeta()`), 
 (en, uk, de, es, ru, x-default), Open Graph / Twitter tags (hero card art as image), JSON-LD on the home page (and any
 page with `jsonLd` in its `PageDef` — /about; every wiki page: Article + BreadcrumbList, the glossary also a DefinedTermSet), and a
 static text version of the page inside `#root` (`.seo-static`: hero role, stats, abilities with T1–T3,
-top builds with IDs, counters, lore, hero links) that React replaces on mount. Data is fetched from the
+top builds with every item by category, the hero's items with pick / win rate / buy minute, win rate against every
+enemy, counters, lore, hero links) that React replaces on mount. Every static page carries the site nav (`navBlock()`)
+and a footer (`footBlock()`: wiki articles, counter guides, about); every hero tab also links its counter guide and the
+other heroes of its class; every item page its shop column (same slot and tier). **Every page needs its own title AND
+description** — the five hero tabs use `meta.hero.<tab>` + `meta.desc.hero` (overview) / `meta.desc.hero.<tab>`, in
+both the prerender and `HeroPage` (19.11: one shared description made Google treat 1100 hero pages as duplicates).
+Data is fetched from the
 API at build time (hero-stats over 7 days, counters, top 5 builds per hero, item-stats overall + by hero + of every
 hero against each enemy (`enemy_hero_ids`, one call per hero, for the counter pages),
 latest patch impact, Europe leaderboard). Player and match pages are not
-prerendered. When adding a page or a hero tab: add its `meta.*` keys, call `useDocumentMeta()` in the
-page AND add it to `pages()` in the prerender script.
+prerendered. When adding a page or a hero tab: add its `meta.*` keys (title and description, unique per page and
+language), call `useDocumentMeta()` in the page AND add it to `pages()` in the prerender script. Check with a build:
+no two pages may share a `<title>` or description, and a static page should not be a few words with only tab links.
 
 `sitemap.xml` is a **sitemap index** pointing at one file per page kind (`SITEMAP_GROUPS`): `sitemap-pages.xml` (home,
 lists, draft, about… — 60), `sitemap-heroes.xml` (hero pages with their tabs — 1100), `sitemap-counters.xml` (220),
@@ -982,7 +989,7 @@ Rules:
 
 ## 2. Поточний стан
 
-> Оновлено 19.11.2026 (розбір індексації Google, лічильники для ботів, sitemap за типами).
+> Оновлено 21.11.2026 (індексація: окремі description і повний статичний вміст вкладок героїв, розділ 6, п. 31).
 
 | Що | Стан |
 |---|---|
@@ -993,7 +1000,7 @@ Rules:
 | Google Search Console | ✅ Domain property `deadbuff.net` підтверджено (TXT у DNS). Sitemap: «Успішно», знайдено 452 сторінки |
 | Bing Webmaster Tools | ⏳ Власник робив імпорт з GSC; sitemap підтягнувся як 0 → треба вручну додати `https://deadbuff.net/sitemap.xml` |
 | Щоденне оновлення | ✅ GitHub Action `Daily rebuild` перевірено ручним запуском — успішно |
-| Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47 → фікс robots.txt (розділ 6, п. 22). 19.11: «Проскановано – не проіндексовано» 192 (перевірка — «Помилка»), «Виявлено – не проіндексовано» 957, «Переспрямування» 3, «Альтернативна з canonical» 1. Знайдено: Googlebot бачив на сторінках предметів «вінрейт 0.00% · матчі 0», на героях — проміжні цифри анімації. Виправлено локально 19.11 + sitemap розбито на 5 файлів за типами сторінок (розділ 6, п. 30), **ще не закомічено** |
+| Індексація в Google | ⏳ 16.11: «Проскановано – наразі не проіндексовано» 47 → фікс robots.txt (розділ 6, п. 22). 19.11: «Проскановано – не проіндексовано» 192 (перевірка — «Помилка»), «Виявлено – не проіндексовано» 957, «Переспрямування» 3, «Альтернативна з canonical» 1. Знайдено: Googlebot бачив на сторінках предметів «вінрейт 0.00% · матчі 0», на героях — проміжні цифри анімації. Виправлено + sitemap розбито на 5 файлів за типами сторінок (розділ 6, п. 30), запушено 19.11 (`2f223fb`), на живому сайті рендер як Googlebot показує справжні цифри. **Власнику:** перевідправити `sitemap.xml` у GSC і попросити індексацію (п. 30). 21.11: знайдено, що 1100 сторінок героїв (5 вкладок × 5 мов) мали один description на героя, а статичний HTML вкладок — 44–103 слова і 5 посилань. Виправлено: свій description на кожну вкладку, повний вміст вкладок у статиці, меню й футер на всіх сторінках (розділ 6, п. 31). Перевірено локально (збірка 2190 сторінок: 0 однакових title / description; рендер як Googlebot). Закомічено 21.11 в окрему гілку `seo/hero-tab-pages`, **ще не в `main` і не задеплоєно** |
 | Партнерство | ✅ Deadbuff — офіційний партнер Deadlock API (іконка серед трекерів на deadlock-api.com, поки без посилання) |
 | Швидкість головної | ✅ 17.11: на телефонах вітрина без важкого фону (−4 МБ), запушено (розділ 6, п. 25) |
 | Статистика сайту `/admin` | ✅ Запушено 17.11 (перевірено локально з wrangler + D1). **Власнику:** `ADMIN_USERS` = свій SteamID64 у Cloudflare (розділ 3 → «Бекенд», крок 6), увійти через Steam. 18.11: власні перегляди, входи й «активність» власника не рахуються; новий блок «Візити детально» (сесії, хто що відкривав, джерела, країни, пристрої) — розділ 6, п. 29. Перевірено локально (wrangler + D1, 375px), запушено 18.11 (`541ec54`) |
@@ -1120,6 +1127,11 @@ Rules:
 - Нові сторінки (предмети, матчі, патчі) = нові входи з Google — див. розділ 11
 - Після деплою вікі: у Search Console «Перевірка URL» → запит на індексування для `/wiki`, `/wiki/souls`, `/wiki/ranks`,
   `/uk/wiki` (ліміт ≈ 10 на день), решту Google знайде сам через sitemap і футер
+- Після деплою п. 31: «Файли Sitemap» → перевідправити `sitemap.xml`; «Перевірка URL» → запит на індексування для
+  вкладок одного-двох популярних героїв (`/heroes/haze/builds`, `/heroes/haze/items`, `/uk/heroes/haze`) — це
+  сигнал Google переглянути шаблон. «Перевірити виправлення» у звітах не тиснути: воно не пришвидшує сканування
+- Налаштування → «Статистика сканування»: подивитись середній час відповіді й частку помилок (5xx / 429) — якщо Google
+  бачить повільні відповіді чи помилки (зокрема `/api/dl/`), він сам зменшує швидкість сканування всього сайту
 
 **Як читати звіт «Індексування сторінок» (розбір 19.11):**
 - «Сторінка з переспрямуванням» — `http://`, `www.` і адреси зі слешем у кінці (308 на адресу без слеша). Норма, внутрішні
@@ -1134,6 +1146,10 @@ Rules:
 - Сторінки × 5 мов: 1880 з 2190 адрес — шаблонні (герої з вкладками, предмети, контрпіки). Якщо через місяць після
   деплою п. 30 у `sitemap-items.xml` майже нічого не проіндексовано, варто обговорити (питання власнику): прибрати
   з sitemap предмети або de/es/ru-версії шаблонних сторінок, щоб Google витрачав сканування на героїв, контрпіки й вікі
+- Розбір 21.11 (п. 31): Google зараз рендерить сторінки правильно (справжні цифри, повний вміст). Приклади
+  «Проскановано» з датою 18.11 — це сканування ще до деплою п. 30. Для нового домену без зовнішніх посилань повна
+  індексація ~2190 адрес займає тижні-місяці; найбільше пришвидшують зовнішні посилання (Reddit, Discord, Twitch-панель
+  BethakZS → deadbuff.net) і живі відвідувачі з пошуку
 
 ---
 
@@ -1264,6 +1280,25 @@ Rules:
     став індексом із 5 файлів за типами сторінок (розділ 5). Перевірено локально (збірка 2190 сторінок, рендер як
     Googlebot до / після). **Власнику після деплою:** у GSC «Файли Sitemap» перевідправити `sitemap.xml` (підхопить 5
     файлів), запит на індексування для `/items/express-shot`, `/heroes/haze`, `/counters/haze`
+31. **21.11 — індексація: дублі description і порожня статика вкладок героїв.** Власник прислав звіти GSC
+    («Проскановано – не проіндексовано» 192, «Виявлено – не проіндексовано» 957, примітка «Перевірку не пройдено»)
+    і попросив, щоб проіндексувалися всі сторінки. Живий сайт перевірено як Googlebot: robots.txt, sitemap, 200, рендер
+    із цифрами — у порядку. Аудит усіх 2190 пререндерених сторінок знайшов: (1) 1100 сторінок героїв ділили 220
+    description — усі 5 вкладок героя мали опис огляду («білди… контрпіки»), тож для Google це дублі; (2) 54 однакові
+    title (лор: DE = EN, UK = RU для частини героїв); (3) статичний HTML вкладок — 44–103 слова і 5 посилань (лише
+    вкладки), на вкладці «Предмети» — загальна фраза про магазин замість предметів героя. Виправлено:
+    - `meta.desc.hero.builds / items / matchups / lore` у 5 мовах (і в пререндері, і в `HeroPage`), нові title лору DE /
+      UK / RU → 0 однакових title і description
+    - статика вкладок: білди з усіма предметами за категоріями, предмети героя з пікрейтом / вінрейтом / хвилиною
+      покупки, вінрейт проти кожного героя, на огляді — топ-предмети й найкращі контрпіки; на кожній вкладці меню
+      сайту, гайд контрпіків і герої того ж класу (400–800 слів, 36–300 посилань замість 44–103 слів і 5 посилань)
+    - футер (статті вікі, контрпіки, about) у статиці кожної сторінки; на сторінці предмета — інші предмети того ж
+      слоту й тіру
+    - категорії білдів з ігровими ключами (`#Citadel_HeroBuilds_EarlyGame`) показувались людям як є → «Рання гра»,
+      «Лайнінг», «Середина гри», «Пізня гра» (`buildCategoryName()`, і в застосунку, і в статиці)
+    - боти завжди бачать мову з URL, навіть якщо в їхньому сховищі збережена інша
+    Перевірено локально: збірка 2190 сторінок, рендер як Googlebot (title / description на кожній вкладці, мова),
+    розгорнута картка білда. **Власнику після деплою:** розділ 5 «Що робити далі»
 29. **18.11 — статистика без власника + візити детально.** Запит: «щоб моя статистика не показувалась (з мого
     акаунта)» і «трекати, хто на які сторінки заходить — з однією сесією чи з різними, щоб бачити, що перегляди не
     накручують»; старий розділ «Відвідування» лишити, детальніше — нижче. Зроблено: `/api/nav` не рахує акаунти з
@@ -1571,3 +1606,6 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   поради щодо Social Links і біо); оновлено розділ 2
 - **19.11.2026** — розбір звіту GSC (192 / 957), лічильники без анімації для ботів, час без «:60», sitemap-індекс із
   5 файлів (розділ 6, п. 30); оновлено розділи 2, 4, 5, 12 і Частину I (§4 файли й SEO prerender, §8 числа)
+- **21.11.2026** — індексація: окремі description вкладок героїв, повна статика вкладок, футер і посилання між
+  предметами, переклад категорій білдів (розділ 6, п. 31); оновлено розділи 2, 5 і Частину I (§4 builds.ts, SEO
+  prerender, мова для ботів)

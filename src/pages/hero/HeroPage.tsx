@@ -189,13 +189,15 @@ export function HeroPage() {
     };
   }, [hero]);
 
-  // Same title/description scheme as scripts/prerender.ts (one title per tab, hero name in both languages).
+  // Same title/description scheme as scripts/prerender.ts (one title and one description per tab, hero name in both languages).
   const heroRows = useHeroRows();
   const wr = hero ? heroRows.rows.find((r) => r.hero.id === hero.id)?.winRate : undefined;
   const tabKey = (HERO_TABS as readonly string[]).includes(tab) ? (tab as HeroTab) : 'overview';
   useDocumentMeta(
     hero ? t(`meta.hero.${tabKey}` as MsgKey, { name: hero.name, en: hero.name_en }) : undefined,
-    hero ? t('meta.desc.hero', { name: hero.name, en: hero.name_en, wr: wr ? fmtPct(wr) : '—' }) : undefined,
+    hero
+      ? t((tabKey === 'overview' ? 'meta.desc.hero' : `meta.desc.hero.${tabKey}`) as MsgKey, { name: hero.name, en: hero.name_en, wr: wr ? fmtPct(wr) : '—' })
+      : undefined,
   );
 
   if (heroes.error)
