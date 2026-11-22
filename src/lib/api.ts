@@ -32,16 +32,31 @@ import type {
   SteamProfile,
   SynergyStat,
 } from './types';
+import {
+  SNAPSHOT_INDEX,
+  SNAPSHOT_MAX_AGE_MS,
+  STEAM_SHARDS,
+  snapshotFile,
+  snapshotHash,
+  snapshotKey,
+  steamShardFile,
+  type SnapshotIndex,
+} from './snapshot';
 
 export const API_BASE = 'https://api.deadlock-api.com/v1';
+
+/* `?.`: scripts/prerender.ts imports this module in Node, where import.meta.env does not exist */
+const PROD = import.meta.env?.PROD === true;
 
 /**
  * Our own caching proxy (Cloudflare Pages Function `functions/api/dl`): same API, answered from the
  * edge cache with stale-while-revalidate — a cold analytics query takes the API 1–5 s, a cached one ~10 ms.
  * Used in production builds; in `npm run dev` only with VITE_API_PROXY=1 (needs `npm run dev:api`).
+ * Every proxy call is a Function invocation (Free plan: 100k a day), so production builds answer the
+ * default-filter queries from build-time static files first (lib/snapshot.ts, see fromSnapshot()).
  */
 const PROXY_BASE = '/api/dl';
-let viaProxy = import.meta.env.PROD || import.meta.env.VITE_API_PROXY === '1';
+let viaProxy = PROD || import.meta.env?.VITE_API_PROXY === '1';
 
 type Params = Record<string, string | number | boolean | null | undefined>;
 
@@ -53,14 +68,92 @@ export class ApiError extends Error {
 
 const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError';
 
+/** Build-time fetcher: scripts/prerender.ts sends every call through its own Node fetch (retries + snapshot files). */
+type Transport = (path: string, params: Params) => Promise<unknown>;
+let transport: Transport | undefined;
+export function setTransport(fn: Transport) {
+  transport = fn;
+}
+
+/* ---------------------------- static snapshots ---------------------- */
+
+const isJson = (res: Response) => res.ok && (res.headers.get('content-type') ?? '').includes('json');
+
+interface LoadedIndex {
+  keys: Set<string>;
+  steam: Set<number>;
+}
+let snapIndex: Promise<LoadedIndex | null> | undefined;
+
+/** dist/data/index.json of this deployment, once per page load (preloaded by the HTML); null = no usable snapshots. */
+function snapshotIndex(): Promise<LoadedIndex | null> {
+  snapIndex ??= fetch(`/${SNAPSHOT_INDEX}`)
+    .then((res) => (isJson(res) ? (res.json() as Promise<SnapshotIndex>) : null))
+    .then((m) => (m && Date.now() - m.at < SNAPSHOT_MAX_AGE_MS ? { keys: new Set(m.keys), steam: new Set(m.steam) } : null))
+    .catch(() => null);
+  return snapIndex;
+}
+
+/** The build-time answer to this exact query, or undefined (not saved, outdated, or the file is gone) → ask the proxy. */
+async function fromSnapshot<T>(path: string, params: Params, signal?: AbortSignal): Promise<T | undefined> {
+  const index = await snapshotIndex();
+  const hash = snapshotHash(snapshotKey(path, params));
+  if (!index?.keys.has(hash)) return undefined;
+  try {
+    const res = await fetch(`/${snapshotFile(hash)}`, { signal });
+    // a file missing from a newer deployment comes back as the SPA's index.html, hence the type check
+    if (isJson(res)) return (await res.json()) as T;
+  } catch (e) {
+    if (isAbort(e)) throw e;
+  }
+  return undefined;
+}
+
+const steamShards = new Map<number, Promise<SteamProfile[]>>();
+function steamShard(n: number): Promise<SteamProfile[]> {
+  let p = steamShards.get(n);
+  if (!p) {
+    p = fetch(`/${steamShardFile(n)}`).then((res) => (isJson(res) ? (res.json() as Promise<SteamProfile[]>) : Promise.reject(new Error('no shard'))));
+    p.catch(() => steamShards.delete(n));
+    steamShards.set(n, p);
+  }
+  return p;
+}
+
+/** Steam profiles of build authors saved at build time — only when every requested account is among them. */
+async function steamFromSnapshot(ids: number[]): Promise<SteamProfile[] | undefined> {
+  if (!PROD || transport) return undefined;
+  const index = await snapshotIndex();
+  if (!index || !ids.every((id) => index.steam.has(id))) return undefined;
+  try {
+    const shards = await Promise.all([...new Set(ids.map((id) => id % STEAM_SHARDS))].map(steamShard));
+    const byId = new Map(shards.flat().map((p) => [p.account_id, p]));
+    const found = ids.map((id) => byId.get(id));
+    return found.every(Boolean) ? (found as SteamProfile[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/* ------------------------------- fetching --------------------------- */
+
 async function get<T>(path: string, params: Params = {}, signal?: AbortSignal): Promise<T> {
+  const clean: Params = {};
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === '') continue;
+    clean[k] = v;
     qs.set(k, String(v));
   }
+  if (transport) return (await transport(path, clean)) as T;
   const query = qs.toString();
   const suffix = `${path}${query ? `?${query}` : ''}`;
+
+  // static files work even when the Function quota is used up
+  if (PROD) {
+    const snap = await fromSnapshot<T>(path, clean, signal);
+    if (snap !== undefined) return snap;
+  }
 
   if (viaProxy) {
     try {
@@ -94,6 +187,9 @@ export interface StatFilters {
   /** look-back window in days */
   days: number;
 }
+
+/** What a first visit sees (all ranks, last 7 days) — the prerender saves these queries as static snapshots. */
+export const DEFAULT_FILTERS: StatFilters = { days: 7 };
 
 /**
  * Window start rounded down to the UTC day, so a query (and its cache entry in our proxy and the
@@ -280,7 +376,7 @@ export const fetchMatch = (matchId: number, signal?: AbortSignal) => get<MatchMe
 export const fetchLeaderboard = (region: Region, heroId?: number, signal?: AbortSignal) =>
   get<{ entries: LeaderboardEntry[] }>(`/leaderboard/${region}${heroId ? `/${heroId}` : ''}`, {}, signal);
 
-export const fetchSteamProfiles = (accountIds: number[], signal?: AbortSignal) =>
-  accountIds.length
-    ? get<SteamProfile[]>('/players/steam', { account_ids: accountIds.join(',') }, signal)
-    : Promise.resolve([] as SteamProfile[]);
+export const fetchSteamProfiles = async (accountIds: number[], signal?: AbortSignal) => {
+  if (!accountIds.length) return [] as SteamProfile[];
+  return (await steamFromSnapshot(accountIds)) ?? get<SteamProfile[]>('/players/steam', { account_ids: accountIds.join(',') }, signal);
+};

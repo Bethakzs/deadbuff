@@ -18,7 +18,7 @@
  * (the SPA works without prerendered pages).
  * ------------------------------------------------------------------ */
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { de } from '../src/i18n/de';
 import { en, type MsgKey } from '../src/i18n/en';
@@ -26,7 +26,9 @@ import { es } from '../src/i18n/es';
 import { ru } from '../src/i18n/ru';
 import { LANGS, pathForLang, type Lang } from '../src/i18n/types';
 import { uk } from '../src/i18n/uk';
-import { buildCategoryName } from '../src/lib/builds';
+import * as api from '../src/lib/api';
+import { BUILD_PAGE, BUILD_STEP, buildCategoryName, uniqueBuilds } from '../src/lib/builds';
+import { SNAPSHOT_DIR, SNAPSHOT_INDEX, STEAM_SHARDS, snapshotFile, snapshotHash, snapshotKey, steamShardFile, type SnapshotIndex } from '../src/lib/snapshot';
 import { buildHeroRows, heroSlug, roleOf, type HeroRow, type Tier } from '../src/lib/heroes';
 import { loreParagraphs, stripHtml } from '../src/lib/html';
 import { countersOf, itemsVsLineup, pairIndex } from '../src/lib/draft';
@@ -35,7 +37,24 @@ import { patchImpact, patchTimeline, patchWindows, type PatchImpactRow, type Pat
 import { lanesFromInfo } from '../src/lib/lanes';
 import { CAMP_KINDS, DISTRICTS, LANES, OBJECTIVES, TIMELINE, campCount, clock, districtName, midbossVars, placeName, wikiNumbers } from '../src/lib/map';
 import { ARTICLES, LEVEL_SOULS, UNLOCK_LEVELS, articlePath, resolveText, type Block, type WikiArticle, type WikiCtx } from '../src/lib/wiki';
-import type { BadgeRow, CounterStat, GameMap, GenericData, Hero, HeroBuild, HeroStat, Item, ItemBucketStat, ItemStat, LeaderboardEntry, NpcUnit, Patch, Rank } from '../src/lib/types';
+import type {
+  BadgeRow,
+  CounterStat,
+  GameMap,
+  GenericData,
+  Hero,
+  HeroBuild,
+  HeroBuildStat,
+  HeroStat,
+  Item,
+  ItemBucketStat,
+  ItemStat,
+  LeaderboardEntry,
+  NpcUnit,
+  Patch,
+  Rank,
+  SteamProfile,
+} from '../src/lib/types';
 
 const API = 'https://api.deadlock-api.com/v1';
 const DIST = join(process.cwd(), 'dist');
@@ -71,16 +90,47 @@ const headline = (title: string) => title.split(/ [—·] Deadlock| \| Deadbuff/
 
 const link = (lang: Lang, path: string, text: string) => `<a href="${esc(pathForLang(path, lang))}">${esc(text)}</a>`;
 
-async function get<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
+type Params = Record<string, string | number | boolean | undefined>;
+
+/** `snap`: also save the answer as a static snapshot (dist/data/, see src/lib/snapshot.ts). */
+async function get<T>(path: string, params: Params = {}, snap = false): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined) qs.set(k, String(v));
   const url = `${API}${path}${qs.toString() ? `?${qs}` : ''}`;
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, { headers: { 'user-agent': 'deadbuff-prerender' } });
-    if (res.ok) return (await res.json()) as T;
+    if (res.ok) {
+      const body = await res.text();
+      const data = JSON.parse(body) as T;
+      if (snap) await saveSnapshot(path, params, body);
+      return data;
+    }
     if (attempt >= 2 || (res.status < 500 && res.status !== 429)) throw new Error(`${res.status} ${path}`);
     await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
   }
+}
+
+/*
+ * Every call made through src/lib/api.ts (fetchHeroes(), fetchHeroStats(DEFAULT_FILTERS)…) builds its query exactly
+ * like the SPA does and is saved as a snapshot — the SPA then finds the same file name for the same query.
+ * Direct get() calls (leaderboard, Steam lookups) are not saved.
+ */
+api.setTransport((path, params) => get(path, params as Params, true));
+
+/** Snapshots written in this run: file hash → query key. Two keys on one hash → both left out of the index. */
+const snapKeys = new Map<string, string>();
+const snapClash = new Set<string>();
+
+async function saveSnapshot(path: string, params: Params, body: string) {
+  const key = snapshotKey(path, params);
+  const hash = snapshotHash(key);
+  const known = snapKeys.get(hash);
+  if (known !== undefined && known !== key) {
+    snapClash.add(hash);
+    return;
+  }
+  snapKeys.set(hash, key);
+  await write(snapshotFile(hash), body);
 }
 
 /** Runs `fn` over items with limited concurrency (be gentle with the free API). */
@@ -134,38 +184,42 @@ interface Data {
   npcs: Map<string, NpcUnit>;
   /** players by rank, last 30 days (wiki → ranks) */
   badges: BadgeRow[];
+  /** first /builds page (weekly favourites, BUILD_PAGE builds) per hero — `builds` is its top 5; the rest is for snapshots */
+  buildPages: Map<number, HeroBuild[]>;
 }
 
+/*
+ * All stats use DEFAULT_FILTERS (all ranks, 7 days from the start of the UTC day) — the very queries a first visit
+ * makes, so the static pages show the same numbers as the app and every answer doubles as a snapshot.
+ */
 async function loadData(): Promise<Data> {
-  const hour = 3600;
-  const since = Math.floor(Date.now() / 1000 / hour) * hour - 7 * 86400;
+  const F = api.DEFAULT_FILTERS;
   const shop = (items: Item[]) => items.filter(isShopItem);
   const [texts, stats, counters, itemStats, itemByHero, patches, bigDays, leaderboard, map, npcs, badges] = await Promise.all([
     Promise.all(
       LANGS.map(async (l) => {
         const [heroes, items, generic, ranks] = await Promise.all([
-          get<Hero[]>('/assets/heroes', { only_active: true, language: l.api }),
-          get<Item[]>('/assets/items', { language: l.api }),
-          get<GenericData>('/assets/generic-data', { language: l.api }).catch(() => undefined),
-          get<Rank[]>('/assets/ranks', { language: l.api }).catch(() => [] as Rank[]),
+          api.fetchHeroes(l.api),
+          api.fetchItems(l.api),
+          api.fetchGenericData(l.api).catch(() => undefined),
+          api.fetchRanks(l.api).catch(() => [] as Rank[]),
         ]);
         return [l.id, { heroesRaw: heroes, items, generic, ranks, lanes: lanesFromInfo(generic?.lane_info).map((x) => x.name) }] as const;
       }),
     ),
-    get<HeroStat[]>('/analytics/hero-stats', { min_unix_timestamp: since }),
-    get<CounterStat[]>('/analytics/hero-counter-stats', { min_unix_timestamp: since, min_matches: 100 }).catch(() => []),
-    get<ItemStat[]>('/analytics/item-stats', { min_unix_timestamp: since, min_matches: 50 }).catch(() => [] as ItemStat[]),
-    get<ItemBucketStat[]>('/analytics/item-stats', { min_unix_timestamp: since, min_matches: 50, bucket: 'hero' }).catch(() => [] as ItemBucketStat[]),
-    get<Patch[]>('/patches').catch(() => [] as Patch[]),
-    get<string[]>('/patches/big-days').catch(() => [] as string[]),
+    api.fetchHeroStats(F),
+    api.fetchCounterStats(F).catch(() => [] as CounterStat[]),
+    api.fetchItemStats(F).catch(() => [] as ItemStat[]),
+    api.fetchItemStatsBucket(F, 'hero').catch(() => [] as ItemBucketStat[]),
+    api.fetchPatches().catch(() => [] as Patch[]),
+    api.fetchBigPatchDays().catch(() => [] as string[]),
+    // live in the app (changes hourly) — not saved as a snapshot
     get<{ entries: LeaderboardEntry[] }>('/leaderboard/Europe')
       .then((r) => r.entries)
       .catch(() => [] as LeaderboardEntry[]),
-    get<GameMap>('/assets/map').catch(() => undefined),
-    get<NpcUnit[]>('/assets/npc-units').catch(() => [] as NpcUnit[]),
-    get<BadgeRow[]>('/analytics/badge-distribution', { min_unix_timestamp: Math.floor(Date.now() / 1000 / 86400) * 86400 - 30 * 86400 }).catch(
-      () => [] as BadgeRow[],
-    ),
+    api.fetchMap().catch(() => undefined),
+    api.fetchNpcUnits('english').catch(() => [] as NpcUnit[]),
+    api.fetchBadgeDistribution(api.dayStart(30)).catch(() => [] as BadgeRow[]),
   ]);
   const raw = Object.fromEntries(texts) as Record<Lang, { heroesRaw: Hero[]; items: Item[]; lanes: string[]; generic?: GenericData; ranks: Rank[] }>;
   const local = Object.fromEntries(
@@ -186,13 +240,16 @@ async function loadData(): Promise<Data> {
     .map((h) => ({ ...h, name_en: h.name, slug: heroSlug(h.name) }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const builds = new Map<number, HeroBuild[]>();
+  const buildPages = new Map<number, HeroBuild[]>();
   const itemsVs = new Map<number, ItemStat[]>();
   await pool(heroes, 6, async (h) => {
     const [list, vs] = await Promise.all([
-      get<HeroBuild[]>('/builds', { hero_id: h.id, sort_by: 'weekly_favorites', sort_direction: 'desc', only_latest: true, limit: 5 }).catch(() => []),
-      get<ItemStat[]>('/analytics/item-stats', { min_unix_timestamp: since, min_matches: 30, enemy_hero_ids: h.id }).catch(() => [] as ItemStat[]),
+      // the same first page the /builds browser and the hero's "Trending" tab load
+      api.fetchBuilds({ heroId: h.id, sortBy: 'weekly_favorites', start: 0, limit: BUILD_PAGE }).catch(() => [] as HeroBuild[]),
+      api.fetchItemStatsVsEnemy(F, undefined, h.id).catch(() => [] as ItemStat[]),
     ]);
-    builds.set(h.id, list);
+    buildPages.set(h.id, list);
+    builds.set(h.id, list.slice(0, 5));
     itemsVs.set(h.id, vs);
   });
   // Patch impact for the newest patch that already has a day of data after it.
@@ -201,7 +258,7 @@ async function loadData(): Promise<Data> {
   const idx = timeline.findIndex((_, i) => patchWindows(timeline, i).afterDays >= 1);
   if (idx >= 0) {
     const w = patchWindows(timeline, idx);
-    const win = (x: { min: number; max: number }) => get<HeroStat[]>('/analytics/hero-stats', { min_unix_timestamp: x.min, max_unix_timestamp: x.max });
+    const win = (x: { min: number; max: number }) => api.fetchHeroStatsWindow(x.min, x.max, undefined);
     const [before, after] = await Promise.all([win(w.before), win(w.after)]).catch(() => [[], []] as HeroStat[][]);
     if (before.length && after.length) patch = { point: timeline[idx], rows: patchImpact(heroes, before, after) };
   }
@@ -221,7 +278,63 @@ async function loadData(): Promise<Data> {
     map,
     npcs: new Map(npcs.map((n) => [n.class_name, n])),
     badges,
+    buildPages,
   };
+}
+
+/* ----------------------------- snapshots ---------------------------- */
+
+/**
+ * Saves the rest of what a first visit asks for with the default filters (loadData() already saved the rest):
+ * assets the static pages don't need, per-hero stats, the "Most played" builds one by one (hero overview shows
+ * 3, the Builds tab the first BUILD_STEP), home's trending builds and the Steam profiles of every author shown.
+ * A failed query is skipped — the app then asks the proxy for it. Returns the account ids in the Steam shards.
+ */
+async function saveSnapshots(d: Data): Promise<number[]> {
+  const F = api.DEFAULT_FILTERS;
+  const skip = () => undefined;
+  const [trending] = await Promise.all([
+    api.fetchBuilds({ sortBy: 'weekly_favorites', limit: 6 }).catch(() => [] as HeroBuild[]),
+    Promise.all([
+      ...LANGS.flatMap((l) => [api.fetchBuildTags(l.api).catch(skip), l.api === 'english' ? undefined : api.fetchNpcUnits(l.api).catch(skip)]),
+      api.fetchUpgradesEn().catch(skip),
+      api.fetchSynergyStats(F).catch(skip),
+      api.fetchLaneStats(F).catch(skip),
+      api.fetchItemStatsBucket(F, 'game_time_min').catch(skip),
+    ]),
+  ]);
+
+  const listed = new Map<number, HeroBuild>();
+  for (const b of [...trending, ...[...d.buildPages.values()].flat()]) listed.set(b.hero_build.hero_build_id, b);
+  // authors on screen: home's trending builds, the first BUILD_STEP of each /builds page, the "Most played" builds
+  const shown: HeroBuild[] = [...trending, ...[...d.buildPages.values()].flatMap((list) => uniqueBuilds([list]).slice(0, BUILD_STEP))];
+
+  await pool(d.heroes, 6, async (h) => {
+    const [buildStats] = await Promise.all([
+      api.fetchHeroBuildStats(F, h.id).catch(() => [] as HeroBuildStat[]),
+      api.fetchAbilityOrders(F, h.id).catch(skip),
+      api.fetchItemStats(F, h.id).catch(skip),
+    ]);
+    // same ranking as HeroOverview / HeroBuilds ("Most played")
+    const top = [...buildStats].sort((a, b) => b.matches - a.matches).slice(0, BUILD_STEP);
+    for (const { hero_build_id: id } of top) {
+      // a build from a list is the same object /builds?build_id= returns (both only_latest) — no extra request
+      const known = listed.get(id);
+      const build = known ?? (await api.fetchBuildById(id).catch(() => null));
+      if (known) await saveSnapshot('/builds', { build_id: id, only_latest: true }, JSON.stringify([known]));
+      if (build) shown.push(build);
+    }
+  });
+
+  const authors = [...new Set(shown.map((b) => b.hero_build.author_account_id).filter((id) => id > 0))];
+  const profiles: SteamProfile[] = [];
+  for (let i = 0; i < authors.length; i += 100) {
+    const chunk = await get<SteamProfile[]>('/players/steam', { account_ids: authors.slice(i, i + 100).join(',') }).catch(() => [] as SteamProfile[]);
+    // only the fields the app shows (the API sends ~9 KB per profile)
+    for (const p of chunk) profiles.push({ account_id: p.account_id, personaname: p.personaname, avatar: p.avatar, avatarmedium: p.avatarmedium });
+  }
+  for (let n = 0; n < STEAM_SHARDS; n++) await write(steamShardFile(n), JSON.stringify(profiles.filter((p) => p.account_id % STEAM_SHARDS === n)));
+  return profiles.map((p) => p.account_id);
 }
 
 /* ------------------------------- pages ------------------------------ */
@@ -998,8 +1111,12 @@ async function main() {
   // The pristine Vite shell. After the first run dist/index.html is the prerendered home page,
   // so re-runs (npm run prerender) must start from the saved app.html instead.
   const shell = join(DIST, 'app.html');
-  const template = await readFile(existsSync(shell) ? shell : join(DIST, 'index.html'), 'utf8');
+  let template = await readFile(existsSync(shell) ? shell : join(DIST, 'index.html'), 'utf8');
   if (!template.includes('<div id="root"></div>')) throw new Error('dist has no clean app shell — run `vite build` first');
+  // the app reads the snapshot index before its first API call: start loading it with the HTML
+  // (crossorigin="anonymous" = the mode of a same-origin fetch(), so the preload is reused)
+  if (!template.includes(SNAPSHOT_INDEX))
+    template = template.replace('</head>', `  <link rel="preload" href="/${SNAPSHOT_INDEX}" as="fetch" crossorigin="anonymous" />\n  </head>`);
   // Plain SPA shell for routes that are never prerendered (player profiles and matches — too many, always fresh).
   await write('app.html', template);
   // Target "/app", not "/app.html": Pages pretty URLs 308-redirect *.html, which would turn the
@@ -1014,11 +1131,15 @@ async function main() {
   );
   // Pages Functions run ONLY for /api/* (own backend + API proxy) — every other request stays a free static file.
   await write('_routes.json', JSON.stringify({ version: 1, include: ['/api/*'], exclude: [] }));
+  // Snapshots (dist/data/): short browser cache — a rebuild replaces them several times a day — and never indexed.
+  await write('_headers', `/${SNAPSHOT_DIR}/*\n  Cache-Control: public, max-age=300\n  X-Robots-Tag: noindex\n`);
+  await rm(join(DIST, SNAPSHOT_DIR), { recursive: true, force: true });
 
   let data: Data;
   try {
     data = await loadData();
   } catch (e) {
+    // no index.json is written → the app ignores any partial snapshots and uses the proxy
     console.warn(`[prerender] Deadlock API unavailable (${(e as Error).message}) — shipping the SPA without static pages`);
     return;
   }
@@ -1065,6 +1186,17 @@ async function main() {
     console.warn('[prerender] SITE_URL is not set — skipped canonical/hreflang links and sitemap.xml (set it in the hosting build settings)');
   }
   console.log(`[prerender] ${list.length * LANGS.length} pages written (${list.length} routes × ${LANGS.length} languages)`);
+
+  let steam: number[] = [];
+  try {
+    steam = await saveSnapshots(data);
+  } catch (e) {
+    console.warn(`[prerender] some snapshots were not saved (${(e as Error).message}) — the app asks the proxy for those`);
+  }
+  const keys = [...snapKeys.keys()].filter((h) => !snapClash.has(h));
+  const index: SnapshotIndex = { at: Date.now(), keys, steam };
+  await write(SNAPSHOT_INDEX, JSON.stringify(index));
+  console.log(`[prerender] ${keys.length} API snapshots + ${steam.length} Steam profiles in dist/${SNAPSHOT_DIR}/${snapClash.size ? ` (${snapClash.size} hash clashes left out)` : ''}`);
 }
 
 main().catch((e) => {

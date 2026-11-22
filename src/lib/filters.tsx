@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { StatFilters } from './api';
+import { DEFAULT_FILTERS, type StatFilters } from './api';
 
 /*
  * Rank brackets offered in the filter bar. `minBadge` = tier*10 + 1 (lowest subrank).
@@ -43,7 +43,7 @@ function load(): { rank: RankId; days: number } {
   } catch {
     /* storage unavailable */
   }
-  return { rank: 'all', days: 7 };
+  return { rank: 'all', days: DEFAULT_FILTERS.days };
 }
 
 export function FilterProvider({ children }: { children: ReactNode }) {

@@ -69,7 +69,7 @@ shells — use `%APPDATA%\fnm\node-versions\<version>\installation\node.exe` or 
    - Environment variable `SITE_URL` = `https://your-domain` (no trailing slash) — used for canonical
      links, hreflang and `sitemap.xml`. Node version comes from `.node-version`.
 3. **Custom domains** → add the domain.
-4. Daily refresh of the prerendered numbers: Pages → Settings → Builds → **Deploy hooks** → create one,
+4. Refresh of the prerendered numbers and API snapshots every 6 hours: Pages → Settings → Builds → **Deploy hooks** → create one,
    then store its URL as the GitHub Actions secret `CF_PAGES_DEPLOY_HOOK` (`.github/workflows/daily-rebuild.yml`).
 5. Google: [Search Console](https://search.google.com/search-console) → add the domain → submit
    `https://your-domain/sitemap.xml`.
@@ -123,6 +123,10 @@ The site is a static SPA (+ SEO prerender) on Cloudflare Pages with a **small ba
 - `/api/dl/*` — caching proxy for the public [Deadlock API](https://api.deadlock-api.com/docs) (edge cache,
   stale-while-revalidate) → repeat queries answer in ~10 ms instead of 1–5 s. The SPA falls back to calling the
   API directly (CORS `*`) whenever the proxy isn't there (dev, Vercel, Function quota exceeded).
+- **API snapshots** (`dist/data/`, written by the prerender): every query a first visit makes with the default
+  filters (assets in all languages, hero / item / counter stats, top builds, their authors) is saved as a static
+  file and the SPA reads it from there — **0 Function calls** for a default-filter page view (a hero page used to
+  make 17). Only other filters, players, matches and the leaderboard go through the proxy. See §3 → Backend.
 - `/api/auth/*`, `/api/me`, `/api/favorites` — accounts and favourites in **Cloudflare D1** (SQLite).
 
 All hero/item art comes from `assets-bucket.deadlock-api.com`.
@@ -169,7 +173,8 @@ npm run typecheck    # app + functions
 ```
 
 - In `npm run dev` the SPA calls the Deadlock API **directly**; set `VITE_API_PROXY=1` to go through the
-  local proxy instead (needs `npm run dev:api`). Production builds always use the proxy (with the direct fallback).
+  local proxy instead (needs `npm run dev:api`). Production builds read the API snapshots in `dist/data/` first, then
+  the proxy, then the API directly. `npm run preview:full` (or the `deadbuff-full` launch config) shows exactly that.
 - Accounts work in dev only while `npm run dev:api` runs (Vite forwards `/api` to it, keeping the Host header so
   cookies and the Steam `return_to` stay on `localhost:5173`). The local secret is in the npm script — never reuse it.
 - Steam accepts `http://localhost:5173` as OpenID realm, so "Sign in with Steam" works locally too.
@@ -184,8 +189,10 @@ Why Cloudflare: free static hosting + registrar at cost + room for a backend lat
 (Pages Functions in `/functions`, D1 database, KV cache, cron) on the same domain → same-origin cookies, no CORS.
 - Build command `npm run build`, output `dist`, env `SITE_URL=https://<domain>` (no trailing slash). Node from `.node-version`.
 - Without `SITE_URL` the build still works but skips canonical/hreflang/sitemap (warning in the log).
-- `.github/workflows/daily-rebuild.yml` pings a Pages deploy hook daily (secret `CF_PAGES_DEPLOY_HOOK`) so
-  prerendered numbers stay fresh. GitHub pauses scheduled workflows after 60 days without repo activity.
+- `.github/workflows/daily-rebuild.yml` pings a Pages deploy hook every 6 hours (secret `CF_PAGES_DEPLOY_HOOK`) so
+  prerendered numbers and API snapshots stay fresh (≈120 of the Free plan's 500 builds a month). GitHub pauses
+  scheduled workflows after 60 days without repo activity — the SPA then ignores snapshots older than 2 days and
+  goes back to the proxy.
 - Routing: `/x/y` → `x/y.html` (Pages pretty URLs); `_redirects` (generated) rewrites `/players/*`, `/matches/*`,
   `/me`, `/login`, `/account`, `/compare`
   (+ the same under every language prefix `/uk`, `/de`, `/es`, `/ru`) to the SPA shell `app.html` — the rule target must be **`/app`, not `/app.html`** (Pages 308-redirects
@@ -235,6 +242,29 @@ server/                          shared code (outside functions/ so it doesn't b
   the API carries `x-proxy-upstream: 1` (+ `x-cache: hit|stale|miss`); `lib/api.ts` treats a response WITHOUT
   that header (quota page, HTML fallback, network error) as "proxy unavailable" and switches to the direct API
   for the rest of the session. Cache API works on the custom domain (not on `*.pages.dev`).
+  **A cache hit is still a Function invocation** (the Function runs before any CDN cache, `cf-cache-status: DYNAMIC`)
+  — hence the snapshots below.
+- **API snapshots** (`src/lib/snapshot.ts`, written by `scripts/prerender.ts`, read by `lib/api.ts`). On 23.11 the
+  account hit 90% of the Free plan's 100k Function calls a day: a hero page made 17 proxy calls + 1 `/api/nav`, and
+  crawlers rendering ~2190 pages with JS add up fast. Now the prerender calls the API through the SPA's own fetchers
+  (`api.setTransport()`), with `DEFAULT_FILTERS` (all ranks, 7 days), and saves each answer as
+  `dist/data/<hash>.json`; the SPA's `get()` computes the same hash for the same query and reads the static file
+  (free, unlimited, also works when the Function quota is used up). Details:
+  - key = path + sorted non-empty params, an open window `min_unix_timestamp = dayStart(N)` written as `days=N`
+    (`snapshotKey()`), so a snapshot from this morning still answers "last 7 days" after midnight UTC; file name =
+    53-bit hash of the key (`snapshotHash()`); `dist/data/index.json` lists the hashes in this build + its time
+    (preloaded by every page). Hashes that clash are left out. An index older than 2 days is ignored.
+  - saved: assets (heroes, items, ranks, generic-data, build-tags, npc-units in 5 languages; map, English upgrades,
+    patches), default-filter stats (hero, counter, synergy, lane, item stats overall / by hero / by minute / per hero /
+    vs each enemy, ability orders, build stats, badge distribution, the newest patch's before / after windows), the
+    first `/builds` page per hero (weekly favourites, 50), home's 6 trending builds and each hero's 10 most played
+    builds by id (taken from the lists when possible). ~705 files, ~77 MB (items ≈ 6.5 MB per language).
+  - **Steam profiles** of every author shown (`account_ids` lists change as builds load, so not one file per query):
+    `data/steam-0…7.json` (by `account_id % 8`, only `account_id / personaname / avatar / avatarmedium`); the index
+    lists the account ids, and `fetchSteamProfiles()` uses the shards only when every requested id is there.
+  - not saved: other rank / period filters, players, matches, leaderboard (hourly), build searches and tags.
+  - `_headers` (generated): `/data/*` → `Cache-Control: public, max-age=300` + `X-Robots-Tag: noindex`.
+  - Numbers with the default filters are therefore up to ~6 h old (rebuild every 6 h), like the prerendered pages.
 - **Owner stats** (`server/stats.ts`, `/admin`): sign-up method comes from `users` itself (Steam sign-ups never get a
   password → `pass_hash IS NULL`), so it covers every account; sign-ins / sign-ups / Steam links are logged in
   `auth_events` from 17.11.2026; `/api/me` marks the user active for the day (`user_days`); the SPA sends one
@@ -280,10 +310,11 @@ public/
                            /favicon.ico must exist or the SPA fallback answers it with HTML
 vite.config.ts             single "vendor" chunk for node_modules
 scripts/
-  prerender.ts             SEO: static HTML per route × language, sitemap.xml (index) + sitemap-*.xml, robots.txt, app.html, _redirects
+  prerender.ts             SEO: static HTML per route × language, sitemap.xml (index) + sitemap-*.xml, robots.txt, app.html, _redirects,
+                           _headers; API snapshots in data/ (+ data/index.json, data/steam-N.json)
   preview.ts               local server for dist/ that mimics Cloudflare Pages routing
 .github/workflows/
-  daily-rebuild.yml        daily Cloudflare Pages deploy-hook ping (fresh prerendered numbers)
+  daily-rebuild.yml        Cloudflare Pages deploy-hook ping every 6 hours (fresh prerendered numbers and API snapshots)
 src/
   data/
     roles.ts               HERO_ROLES: Dota-style position ratings 0–10 per hero (edit numbers here)
@@ -303,8 +334,11 @@ src/
     wiki/en.ts … ru.ts     texts of the wiki articles (souls, shop, combat, ranks, glossary), spread into the main
                            dictionaries (`...wikiEn`) — the map article's keys stay in the main files
   lib/
-    api.ts                 ALL Deadlock API calls live here (fetch wrapper: proxy /api/dl → direct fallback,
-                           endpoints, StatFilters -> params, dayStart())
+    api.ts                 ALL Deadlock API calls live here (fetch wrapper: static snapshot → proxy /api/dl → direct
+                           fallback, endpoints, StatFilters -> params, DEFAULT_FILTERS, dayStart(), setTransport() for
+                           the prerender)
+    snapshot.ts            API snapshots in dist/data/: snapshotKey(), snapshotHash(), index / Steam shard file names —
+                           shared by the SPA (lookup) and the prerender (writing)
     auth.ts                own backend: useAuth() (only with the db_auth hint cookie), useAuthActions()
                            (login/register/logout/unlinkSteam/deleteAccount), steamUrl(), own() fetch helper
     favorites.ts           useFavorites() (server when logged in, localStorage for guests), <FavoritesSync/>
@@ -497,7 +531,8 @@ other heroes of its class; every item page its shop column (same slot and tier).
 description** — the five hero tabs use `meta.hero.<tab>` + `meta.desc.hero` (overview) / `meta.desc.hero.<tab>`, in
 both the prerender and `HeroPage` (19.11: one shared description made Google treat 1100 hero pages as duplicates).
 Data is fetched from the
-API at build time (hero-stats over 7 days, counters, top 5 builds per hero, item-stats overall + by hero + of every
+API at build time through the SPA's own fetchers with `DEFAULT_FILTERS`, so every answer is also saved as an API
+snapshot (§3 → Backend) (hero-stats over 7 days, counters, top 5 builds per hero, item-stats overall + by hero + of every
 hero against each enemy (`enemy_hero_ids`, one call per hero, for the counter pages),
 latest patch impact, Europe leaderboard). Player and match pages are not
 prerendered. When adding a page or a hero tab: add its `meta.*` keys (title and description, unique per page and
@@ -522,7 +557,8 @@ disallows all bots in its own robots.txt, so our proxy is the only way Google ge
 ```
 FilterProvider (rank, days)  ──►  StatFilters { minBadge?, days }
                                         │
-hooks/useStats.ts  ── queryKey includes filters ──►  lib/api.ts  ──►  /api/dl (edge cache)  ──►  api.deadlock-api.com
+hooks/useStats.ts  ── queryKey includes filters ──►  lib/api.ts  ──►  /data/<hash>.json (build-time snapshot, default filters)
+        │                                                   ├── else /api/dl (edge cache)  ──►  api.deadlock-api.com
         │                                                   └── fallback: api.deadlock-api.com directly
         │
 lib/auth.ts · lib/favorites.ts  ──►  /api/auth/*, /api/me, /api/favorites  ──►  D1
@@ -537,7 +573,8 @@ derived helpers (lib/heroes.ts buildHeroRows, hooks/useHeroData.ts)  ──►  
   keeps old numbers on screen while the new ones load (the FilterBar shows an "updating" spinner).
 * `filterParams()` rounds `min_unix_timestamp` **down to the UTC day** (`dayStart()`) — a query stays identical for
   a whole day, so our proxy's edge cache (and the API's CDN) keep hitting; "7 days" = 7–8 days of matches. Don't use
-  `Date.now()` directly in query params. (The prerender still rounds to the hour — it runs once a day anyway.)
+  `Date.now()` directly in query params. The prerender uses the same fetchers (`DEFAULT_FILTERS`), so its queries are
+  the app's queries and double as API snapshots.
 * Never call `fetch` from components. Add an endpoint to `lib/api.ts`, a hook to `hooks/`, then use it.
 
 ---
@@ -989,7 +1026,7 @@ Rules:
 
 ## 2. Поточний стан
 
-> Оновлено 21.11.2026 (індексація: окремі description і повний статичний вміст вкладок героїв, розділ 6, п. 31).
+> Оновлено 23.11.2026 (90% ліміту функцій Cloudflare → знімки API в статичних файлах, розділ 6, п. 32).
 
 | Що | Стан |
 |---|---|
@@ -1007,6 +1044,7 @@ Rules:
 | Аналітика | Cloudflare Web Analytics: **Workers & Pages → deadbuff → Metrics** (зняти фільтр «Site is in deadbuff.pages.dev», інакше видно лише pages.dev). За 13–16.11: 41 відвідування, 208 переглядів, топ — `/builds`, `/`, `/heroes` |
 | Деплой 16.11 | ✅ Запушено 16.11: новий драфт-помічник, сторінки `/counters`, блок драфту на головній, свайп вітрини й «Зрізу мети» на телефоні, партнер у футері, текст про ingest tool, сторінка `/about` зі стрімом власника. Збірка проходить (2160 сторінок), перевірено в браузері (EN/UA/DE, 375px) |
 | Вікі `/wiki` | ✅ 17.11: «Карта» + 5 статей (душі й рівні, магазин, бій і рух, ранги, словник), закріплена смуга розділів. Перевірено локально (UA/DE, 375px, 1440px), збірка — 2190 сторінок. Запушено 17.11 разом із SEO вікі (h1, якорі, JSON-LD, футер). **Власнику:** перечитати тексти механік (розділ 9, п. 0a3) і попросити індексацію в GSC (розділ 5) |
+| Ліміт функцій Cloudflare | ⚠️ 23.11: лист про 90% денного ліміту (100 тис. викликів). Зроблено знімки API в `dist/data/` — сторінки зі стандартними фільтрами більше не викликають проксі (розділ 6, п. 32). Перевірено локально, **ще не закомічено й не задеплоєно** |
 | Twitch-набір | ✅ 17.11: `twitch-kit/` — 10 панелей, банер профілю, офлайн-банер, плашка для OBS у стилі сайту + інструкція (`twitch-kit/README.md`). Генерується з `twitch-kit/src/kit.html` через headless Chrome, у збірку сайту не входить. Власник поставив лише панель Deadbuff і попросив решту «у своєму стилі, не Deadlock» → 17.11: `twitch-kit/panels-bethak/` — 8 панелей у стилі його банера (нічна кімната, фіолетовий неон, крейда з короною, шматки банера), з `twitch-kit/src/bethak.html`. Ще не закомічено — **власнику:** вирішити, чи тримати в репозиторії |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
@@ -1058,7 +1096,7 @@ Rules:
 Опційно: `PBKDF2_ITERATIONS=100000` — лише якщо перейти на Workers Paid ($5/міс); `DEADLOCK_API_KEY` — якщо API почне обмежувати запити.
 
 ### GitHub
-- `.github/workflows/daily-rebuild.yml`: щодня о 04:17 UTC + ручний запуск → `POST` на deploy hook →
+- `.github/workflows/daily-rebuild.yml`: кожні 6 годин (00:17, 06:17, 12:17, 18:17 UTC) + ручний запуск → `POST` на deploy hook →
   Cloudflare перебілджує сайт → у статичних сторінках свіжі цифри (вінрейти, топ-білди, контрпіки)
 - GitHub ставить cron на паузу після 60 днів без активності в репо — тоді просто зробити будь-який коміт
 - Коміти — з noreply-адреси GitHub, не з особистої пошти
@@ -1066,9 +1104,10 @@ Rules:
 ### Вартість
 - Cloudflare Pages / DNS / SSL / redirects — **$0** (ліміт Free: 500 білдів на місяць; щоденний ребілд ≈ 30)
 - Домен — щорічне продовження в Namecheap (єдина регулярна витрата)
-- Бекенд (Pages Functions + D1) — **$0** на Free: 100 тис. викликів функцій на день, D1 5 ГБ / 5 млн читань на день.
-  Функції викликаються **лише** для `/api/*` (сторінки, картинки, JS — безкоштовна статика без лімітів).
-  Одна сторінка = ~3–10 запитів до проксі → вистачає приблизно на 10–30 тис. переглядів на день
+- Бекенд (Pages Functions + D1) — **$0** на Free: 100 тис. викликів функцій на день (на весь акаунт), D1 5 ГБ / 5 млн
+  читань на день. Функції викликаються **лише** для `/api/*` (сторінки, картинки, JS, знімки API в `/data/` —
+  безкоштовна статика без лімітів). З 23.11 сторінка зі стандартними фільтрами = **1 виклик** (`/api/nav`, лише люди);
+  проксі — тільки для інших фільтрів, гравців, матчів, лідерборду (розділ 6, п. 32). До того сторінка героя робила 18
 - Якщо ліміт вичерпано — сайт **не ламається**: SPA сам переходить на прямі запити до Deadlock API (лише повільніше),
   а вхід / обране до півночі UTC не працюють. Тоді варто взяти **Workers Paid за $5/міс** (10 млн запитів, 30 с CPU)
   і поставити `PBKDF2_ITERATIONS=100000`
@@ -1299,6 +1338,20 @@ Rules:
     - боти завжди бачать мову з URL, навіть якщо в їхньому сховищі збережена інша
     Перевірено локально: збірка 2190 сторінок, рендер як Googlebot (title / description на кожній вкладці, мова),
     розгорнута картка білда. **Власнику після деплою:** розділ 5 «Що робити далі»
+32. **23.11 — ліміт функцій Cloudflare: 90% за день.** Прийшов лист «90% of its daily requests limit for Workers
+    and/or Pages Functions» (Free: 100 тис. викликів на добу на весь акаунт, скидається о 00:00 UTC = 02:00 Київ).
+    Причина: на живому сайті одна сторінка героя робила **18 викликів** (17 до проксі `/api/dl` + 1 `/api/nav`), а кеш
+    проксі живе всередині функції — CDN перед нею нічого не кешує (`cf-cache-status: DYNAMIC`), тож кожен запит
+    рахується. 100 тис. = лише ~5,5 тис. переглядів. Людей стільки нема (41 відвідування за 13–16.11), тож найімовірніше
+    це боти, що рендерять 2190 сторінок з JS (один прохід Googlebot ≈ 35–40 тис. викликів) — точно не перевірено:
+    власник не зміг відкрити статистику Cloudflare ні у вбудованому браузері, ні через Chrome. Рішення: **знімки
+    API** — збірка зберігає все, що сторінки запитують зі стандартними фільтрами (усі ранги, 7 днів), як статичні файли
+    `dist/data/` (довідники 5 мовами, статистика героїв / предметів / контрпіків, топ-білди, автори), і сайт бере дані
+    звідти; статика безкоштовна й без лімітів і працює навіть коли ліміт функцій вичерпано. Ребілд — кожні 6 годин замість
+    раз на добу (цифри за замовчуванням ≤ ~6 год, ≈120 білдів на місяць із 500). Інші фільтри, гравці, матчі й
+    лідерборд — як і раніше через проксі. Перевірено локально (`wrangler pages dev dist`): головна, тір-ліст, герої, білди,
+    предмети, сторінка предмета, вкладки героя, контрпіки, драфт, вікі, патчі — **0 викликів проксі** (лише `/api/nav`).
+    Workers Paid ($5) поки не потрібен — перевірити по графіку викликів після деплою (розділ 9)
 29. **18.11 — статистика без власника + візити детально.** Запит: «щоб моя статистика не показувалась (з мого
     акаунта)» і «трекати, хто на які сторінки заходить — з однією сесією чи з різними, щоб бачити, що перегляди не
     накручують»; старий розділ «Відвідування» лишити, детальніше — нижче. Зроблено: `/api/nav` не рахує акаунти з
@@ -1428,6 +1481,11 @@ nurse-harrow 10/3/5/0, baba 4/6/8/5.
 3. **Класи для 6 героїв без `hero_type` в API** (Dynamo, Kelvin, Ivy, Paige, Rem, Nurse Harrow) — зараз показані
    як «Універсал». Власник може дати їм справжні класи (Стрілець, Містик…)
 4. З чого починати розробку далі (розділ 11): рекомендація — сторінки предметів, потім матчів, потім Steam-логін
+5. **Ліміт функцій (23.11, розділ 6, п. 32).** Після деплою знімків API: Cloudflare → Workers & Pages → deadbuff →
+   Metrics — виклики функцій за добу мають упасти в рази. Якщо ні — дивитись Analytics & Logs → HTTP Traffic з фільтром
+   шляху `/api/`: хто саме смикає (user-agent, IP / ASN). Якщо це сторонній клієнт або SEO-/AI-боти — правило WAF
+   (Security → WAF → Custom rules, безкоштовно, спрацьовує ДО функції і не рахується), Googlebot / Bingbot не чіпати.
+   Якщо і це не допоможе — Workers Paid $5/міс (10 млн викликів) + `PBKDF2_ITERATIONS=100000`
 
 ---
 
@@ -1555,7 +1613,11 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   (deadlock-api.com/ingest-cache) — посилання в примітці на профілі гравця
 - «Найкращий контрпік» може мати вінрейт < 50% проти героя: контрпік = ефект понад власну силу обох героїв. Тому в рядку
   є «очікувано» (вінрейт героя з поправкою на силу ворога) — різниця між ним і фактичним і є ефектом
-- Пререндерні цифри — знімок на момент білду (раз на добу); React одразу підтягує живі дані
+- Пререндерні цифри і знімки API в `/data/` — стан на момент білду (кожні 6 годин); зі стандартними фільтрами (усі ранги,
+  7 днів) сайт показує саме їх, з іншими фільтрами — живі дані через проксі. Якщо ребілди зупинились більш ніж на 2 дні,
+  сайт сам перестає брати знімки й повертається до проксі
+- Новий герой / предмет після патча з'явиться на сайті з наступним ребілдом (≤ 6 год). Пришвидшити: GitHub → Actions →
+  «Daily rebuild» → Run workflow
 - Google індексує **відрендерену** сторінку (після JS), а не статичний текст. Якщо дані не вантажаться (robots.txt,
   ліміт функцій) — Google бачить скелетон. Перевірка: Search Console → Перевірка URL → «Перевірити URL у реальному часі»
   → «Переглянути перевірену сторінку» → знімок екрана і «Ресурси сторінки» (нічого не має бути «Заблоковано robots.txt»
@@ -1609,3 +1671,5 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
 - **21.11.2026** — індексація: окремі description вкладок героїв, повна статика вкладок, футер і посилання між
   предметами, переклад категорій білдів (розділ 6, п. 31); оновлено розділи 2, 5 і Частину I (§4 builds.ts, SEO
   prerender, мова для ботів)
+- **23.11.2026** — 90% ліміту функцій Cloudflare → знімки API в `dist/data/`, ребілд кожні 6 годин (розділ 6, п. 32);
+  оновлено розділи 2, 3, 9, 12 і Частину I (§1, §3 бекенд і деплой, §4 файли й SEO prerender, §5)
