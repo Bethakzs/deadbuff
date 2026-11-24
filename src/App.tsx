@@ -24,6 +24,7 @@ import { NotFound } from './pages/NotFound';
 import { PatchesPage } from './pages/Patches';
 import { PlayerPage } from './pages/Player';
 import { PlayersPage } from './pages/Players';
+import { ProsPage } from './pages/Pros';
 import { TierListPage } from './pages/TierList';
 import { WikiPage } from './pages/wiki';
 
@@ -74,6 +75,7 @@ export default function App() {
           <Route path="/matches/:matchId" element={<MatchPage />} />
           <Route path="/patches" element={<PatchesPage />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />
+          <Route path="/pros" element={<ProsPage />} />
           <Route path="/wiki/:slug?" element={<WikiPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/admin" element={<AdminPage />} />

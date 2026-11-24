@@ -39,6 +39,10 @@ function policy(path: string): Policy {
   if (path === 'builds') return { fresh: 15 * MIN, stale: DAY, browser: 5 * MIN };
   if (path === 'players/steam') return { fresh: HOUR, stale: 7 * DAY, browser: 30 * MIN };
   if (path === 'players/rank') return { fresh: 15 * MIN, stale: DAY, browser: 5 * MIN };
+  // the pro feed (bulk metadata of the pro accounts): a few new games every few minutes
+  if (path === 'matches/metadata') return { fresh: 5 * MIN, stale: HOUR, browser: 2 * MIN };
+  // live matches of the Watch tab
+  if (path === 'matches/active') return { fresh: MIN, stale: 5 * MIN, browser: 30 };
   // match history, hero stats, mate stats, one player's rank: change after every game → short, no stale
   return { fresh: 2 * MIN, stale: 0, browser: MIN };
 }

@@ -114,7 +114,7 @@
 .nav__link {
   white-space: nowrap;
 }
-@media (min-width: 901px) and (max-width: 1180px) {
+@media (min-width: 1081px) and (max-width: 1180px) {
   .site-header__inner {
     gap: 18px;
   }
@@ -330,7 +330,8 @@
   display: none;
 }
 
-@media (max-width: 900px) {
+/* burger header: 6 main tabs + search + account + language need ~1045px (UA, guest), so it folds at 1080 */
+@media (max-width: 1080px) {
   .more-menu {
     display: none;
   }

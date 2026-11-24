@@ -4,6 +4,8 @@
  * ------------------------------------------------------------------ */
 import type {
   AbilityOrderStat,
+  ActiveMatch,
+  ProMatch,
   BuildTag,
   BadgeRow,
   GameMap,
@@ -371,6 +373,53 @@ export const fetchMateStats = (accountId: number, signal?: AbortSignal) =>
 
 /** Full match metadata (players, item purchases, stat snapshots). ~1 MB, immutable once the match is parsed. */
 export const fetchMatch = (matchId: number, signal?: AbortSignal) => get<MatchMetadata>(`/matches/${matchId}/metadata`, {}, signal);
+
+/** Player columns of the pro feed: hero, side, K/D/A, souls and the purchases (for the final build). */
+const PRO_PLAYER_COLUMNS = 'hero_id,team,kills,deaths,assists,net_worth,items.item_id,items.sold_time_s';
+
+export interface ProMatchQuery {
+  /** pro accounts (sorted, so the query — and its snapshot — is the same every time) */
+  accountIds: number[];
+  heroId?: number;
+  /** ranked games only / private lobbies only (tournaments, scrims) / both */
+  mode?: 'ranked' | 'lobby';
+  days: number;
+  limit: number;
+}
+
+/** Query of fetchProMatches() — exported so the prerender can save "no games" under the same snapshot key. */
+export function proMatchParams(q: ProMatchQuery): Params {
+  const p: Params = {
+    account_ids: q.accountIds.join(','),
+    only_filtered_players: true,
+    include_info: true,
+    extra_player_columns: PRO_PLAYER_COLUMNS,
+    hero_ids: q.heroId,
+    match_mode: q.mode === 'lobby' ? 'private_lobby' : q.mode,
+    min_unix_timestamp: dayStart(q.days),
+    order_by: 'match_id',
+    order_direction: 'desc',
+    limit: q.limit,
+  };
+  for (const k of Object.keys(p)) if (p[k] === undefined) delete p[k];
+  return p;
+}
+
+/**
+ * Recent matches of the given accounts, newest first, with only those accounts in `players`. One request for
+ * the whole pro list (~300 ids still fits the URL). With `heroId` the API keeps matches where anyone played the
+ * hero — lib/pros.ts keeps only the pros who did. "No matches found" (404) = an empty list.
+ */
+export const fetchProMatches = (q: ProMatchQuery, signal?: AbortSignal) =>
+  q.accountIds.length
+    ? get<ProMatch[]>('/matches/metadata', proMatchParams(q), signal).catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) return [] as ProMatch[];
+        throw e;
+      })
+    : Promise.resolve([] as ProMatch[]);
+
+/** Matches being played right now (the in-game Watch tab: the top 200). */
+export const fetchActiveMatches = (signal?: AbortSignal) => get<ActiveMatch[]>('/matches/active', {}, signal);
 
 /** Valve's ranked leaderboard (updated hourly), optionally for one hero. */
 export const fetchLeaderboard = (region: Region, heroId?: number, signal?: AbortSignal) =>

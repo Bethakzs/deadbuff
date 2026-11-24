@@ -1399,3 +1399,331 @@ a.admin-src:hover {
     font-size: 13px;
   }
 }
+
+/* ------------------------------ pro tracker ------------------------------ */
+.pro-games {
+  display: grid;
+  gap: 6px;
+}
+/* two lines: who / K/D/A / souls, then the final build under them; result, hero and time span both */
+.pro-game {
+  display: grid;
+  grid-template-columns: 70px 40px minmax(0, 1fr) 84px 64px auto;
+  grid-template-areas:
+    'res hero who kda souls when'
+    'res hero items items items when';
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: inset 3px 0 0 var(--c);
+}
+.pro-games.is-one-hero .pro-game {
+  grid-template-columns: 70px minmax(0, 1fr) 84px 64px auto;
+  grid-template-areas:
+    'res who kda souls when'
+    'res items items items when';
+}
+.pro-game.is-win {
+  --c: var(--wr-great);
+}
+.pro-game.is-loss {
+  --c: var(--wr-awful);
+}
+.pro-game__result {
+  grid-area: res;
+  font-family: var(--font-display);
+  font-size-adjust: var(--display-adjust);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c);
+}
+.pro-game__hero {
+  grid-area: hero;
+  display: flex;
+}
+.pro-game__who {
+  grid-area: who;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.pro-game__kda {
+  grid-area: kda;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.pro-game__souls {
+  grid-area: souls;
+  font-size: 13px;
+}
+.pro-game__items {
+  grid-area: items;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+}
+.pro-game__items .item-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+}
+.pro-game__when {
+  grid-area: when;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  white-space: nowrap;
+}
+.pro-game__match {
+  color: var(--brass);
+  font-size: 12px;
+}
+.pro-game__match:hover {
+  color: var(--brass-hi);
+}
+.pro-game__lobby {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--weapon);
+  border-color: rgb(var(--weapon-rgb) / 0.4);
+}
+.pro-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.pro-name__link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.pro-name__link:hover {
+  color: var(--brass-hi);
+}
+.pro-name__meta {
+  flex: none;
+}
+
+/* hero page block */
+.hero-pros {
+  margin-top: 32px;
+}
+.hero-pros__side {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.hero-pros__note {
+  margin-top: 10px;
+}
+.pro-tally {
+  display: grid;
+  gap: 8px;
+}
+.pro-tally li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 10px;
+  font-size: 13px;
+}
+.pro-build {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.pro-build li {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+}
+.pro-build .item-icon {
+  width: 34px;
+  height: 34px;
+}
+
+/* /pros */
+.pros-toolbar {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.pros-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 22px;
+  align-items: start;
+}
+.pros-layout__main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.pros-layout__side {
+  display: grid;
+  gap: 14px;
+}
+.pro-live__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pro-live__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blood);
+  box-shadow: 0 0 0 0 rgb(196 64 47 / 0.6);
+  animation: pro-live-pulse 1.8s ease-out infinite;
+}
+@keyframes pro-live-pulse {
+  70% {
+    box-shadow: 0 0 0 7px rgb(196 64 47 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(196 64 47 / 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pro-live__dot {
+    animation: none;
+  }
+}
+.pro-live {
+  display: grid;
+  gap: 8px;
+}
+.pro-live li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.pro-live li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.pro-live__time {
+  min-width: 44px;
+  color: var(--brass-hi);
+}
+.pro-live__who {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  min-width: 0;
+}
+.pro-live__pro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pro-live .is-up {
+  color: var(--wr-great);
+}
+.pro-live .is-down {
+  color: var(--wr-awful);
+}
+.pro-meta {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.pro-meta li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pro-meta__hero {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.pro-meta__hero:hover {
+  color: var(--brass-hi);
+}
+.pro-meta__nums {
+  flex: none;
+}
+.pro-list {
+  display: grid;
+  gap: 6px;
+}
+.pro-list li {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pro-list__rank {
+  font-size: 11px;
+}
+.pro-list__heroes {
+  display: flex;
+  gap: 3px;
+}
+.pro-list__more {
+  margin-top: 10px;
+}
+
+@media (max-width: 1000px) {
+  .pros-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 720px) {
+  .pro-game,
+  .pro-games.is-one-hero .pro-game {
+    grid-template-columns: 56px auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'res hero who kda'
+      'items items items items'
+      'when when when when';
+    padding: 8px 10px;
+  }
+  .pro-games.is-one-hero .pro-game {
+    grid-template-columns: 56px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'res who kda'
+      'items items items'
+      'when when when';
+  }
+  .pro-game__souls {
+    display: none;
+  }
+  .pro-game__when {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 4px 10px;
+  }
+  .hero-pros__side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

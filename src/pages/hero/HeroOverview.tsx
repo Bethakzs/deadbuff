@@ -17,6 +17,7 @@ import { useT, type MsgKey } from '../../i18n';
 import { fmtCompact, fmtNum, fmtPct } from '../../lib/format';
 import { heroWeapon } from '../../lib/heroes';
 import type { Hero, Item } from '../../lib/types';
+import { HeroPros } from './HeroPros';
 
 /* ------------------------------ skill order ------------------------------ */
 function SkillOrder({ hero, abilities }: { hero: Hero; abilities: Item[] }) {
@@ -300,6 +301,7 @@ export function HeroOverview({ hero, abilities }: { hero: Hero; abilities: Item[
         </div>
         <SkillOrder hero={hero} abilities={abilities} />
         <TopBuilds hero={hero} abilities={abilities} />
+        <HeroPros hero={hero} />
       </div>
       <aside className="hero-overview__side">
         <PositionsPanel hero={hero} />

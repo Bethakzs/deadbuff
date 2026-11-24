@@ -450,6 +450,67 @@ export interface LeaderboardEntry {
   badge_level?: number;
 }
 
+/* ------------------------------ pro players ----------------------------- */
+
+/**
+ * A "pro": a top-of-the-leaderboard player whose account could be told apart (see lib/pros.ts). The game has
+ * no official pro / esports list, so the top of Valve's ranked leaderboard in each region stands in for it.
+ */
+export interface ProPlayer {
+  /** account_id (SteamID3) */
+  id: number;
+  /** leaderboard name */
+  name: string;
+  region: Region;
+  /** place on the region's leaderboard */
+  rank: number;
+  heroes: number[];
+}
+
+/** One player of a /matches/metadata row (only the pros of the match: `only_filtered_players`). */
+export interface ProMatchPlayer {
+  account_id: number;
+  hero_id: number;
+  team: 'Team0' | 'Team1';
+  kills: number;
+  deaths: number;
+  assists: number;
+  net_worth: number;
+  /** every purchase in order (abilities too), `items_sold_time_s` alongside (0 = kept) */
+  items_item_id?: number[];
+  items_sold_time_s?: number[];
+}
+
+/** A row of GET /matches/metadata with match info + the pros' player columns. */
+export interface ProMatch {
+  match_id: number;
+  /** "2026-11-24 22:14:48" UTC */
+  start_time: string;
+  winning_team: 'Team0' | 'Team1';
+  duration_s: number;
+  /** "Ranked" | "Unranked" | "PrivateLobby" | … */
+  match_mode: string;
+  average_badge: number | null;
+  players: ProMatchPlayer[];
+}
+
+/** GET /matches/active row: a match being played now (the in-game Watch tab, top 200). */
+export interface ActiveMatch {
+  match_id: number;
+  /** unix seconds */
+  start_time: number;
+  /** game time so far, seconds */
+  duration_s?: number | null;
+  players: { account_id: number; team: number; hero_id: number; abandoned?: boolean | null }[];
+  net_worth_team_0?: number | null;
+  net_worth_team_1?: number | null;
+  spectators?: number | null;
+  /** "Ranked", "Unranked", "PrivateLobby"… */
+  match_mode_parsed?: string | null;
+  /** "Europe", "NAmerica"… */
+  region_mode_parsed?: string | null;
+}
+
 /* -------------------------------- map -------------------------------- */
 
 /**

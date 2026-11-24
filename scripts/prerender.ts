@@ -37,6 +37,7 @@ import { patchImpact, patchTimeline, patchWindows, type PatchImpactRow, type Pat
 import { lanesFromInfo } from '../src/lib/lanes';
 import { CAMP_KINDS, DISTRICTS, LANES, OBJECTIVES, TIMELINE, campCount, clock, districtName, midbossVars, placeName, wikiNumbers } from '../src/lib/map';
 import { ARTICLES, LEVEL_SOULS, UNLOCK_LEVELS, articlePath, resolveText, type Block, type WikiArticle, type WikiCtx } from '../src/lib/wiki';
+import { computePros, HERO_PRO_DAYS, HERO_PRO_LIMIT, itemTally, PRO_REGIONS, proGames, proIds, PROS_FILE, REGION_TAG, type ProGame, type ProsFile } from '../src/lib/pros';
 import type {
   BadgeRow,
   CounterStat,
@@ -52,6 +53,9 @@ import type {
   LeaderboardEntry,
   NpcUnit,
   Patch,
+  PlayerRankRow,
+  ProMatch,
+  ProPlayer,
   Rank,
   SteamProfile,
 } from '../src/lib/types';
@@ -186,6 +190,10 @@ interface Data {
   badges: BadgeRow[];
   /** first /builds page (weekly favourites, BUILD_PAGE builds) per hero — `builds` is its top 5; the rest is for snapshots */
   buildPages: Map<number, HeroBuild[]>;
+  /** pro players (top of every region's leaderboard, see src/lib/pros.ts) → dist/data/pros.json */
+  pros: ProPlayer[];
+  /** the pros' games on each hero, last HERO_PRO_DAYS (the hero page's query, saved as a snapshot) */
+  proMatches: Map<number, ProMatch[]>;
 }
 
 /*
@@ -262,6 +270,29 @@ async function loadData(): Promise<Data> {
     const [before, after] = await Promise.all([win(w.before), win(w.after)]).catch(() => [[], []] as HeroStat[][]);
     if (before.length && after.length) patch = { point: timeline[idx], rows: patchImpact(heroes, before, after) };
   }
+
+  // Pro players: the leaderboards (~1 MB each) and rank lookups are direct calls — not snapshots, the SPA reads the
+  // small pros.json instead (and /leaderboard stays live). Each hero's pro games go through api.* → saved as the
+  // snapshot the hero page reads; "no games" (404) is saved as [] so that hero page makes no request either.
+  const pros = await computePros(undefined, {
+    leaderboard: (r) => get<{ entries: LeaderboardEntry[] }>(`/leaderboard/${r}`),
+    ranks: (ids) => get<PlayerRankRow[]>('/players/rank', { account_ids: ids.join(',') }),
+  }).catch(() => [] as ProPlayer[]);
+  const proMatches = new Map<number, ProMatch[]>();
+  if (pros.length) {
+    const accountIds = proIds(pros);
+    await pool(heroes, 4, async (h) => {
+      const q = { accountIds, heroId: h.id, days: HERO_PRO_DAYS, limit: HERO_PRO_LIMIT };
+      try {
+        proMatches.set(h.id, await api.fetchProMatches(q));
+      } catch (e) {
+        if (!String((e as Error).message).startsWith('404')) return; // the SPA asks the proxy then
+        await saveSnapshot('/matches/metadata', api.proMatchParams(q) as Params, '[]');
+        proMatches.set(h.id, []);
+      }
+    });
+  }
+
   return {
     heroes,
     local,
@@ -279,6 +310,8 @@ async function loadData(): Promise<Data> {
     npcs: new Map(npcs.map((n) => [n.class_name, n])),
     badges,
     buildPages,
+    pros,
+    proMatches,
   };
 }
 
@@ -361,7 +394,7 @@ function heroText(d: Data, hero: Hero, lang: Lang) {
 }
 
 function navBlock(lang: Lang) {
-  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/draft', t(lang, 'nav.draft'))}${link(lang, '/counters', t(lang, 'ctr.eyebrow'))}${link(lang, '/wiki', t(lang, 'nav.wiki'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
+  return `<nav>${link(lang, '/', 'Deadbuff')}${link(lang, '/tier-list', t(lang, 'nav.tierList'))}${link(lang, '/heroes', t(lang, 'nav.heroes'))}${link(lang, '/builds', t(lang, 'nav.builds'))}${link(lang, '/items', t(lang, 'nav.items'))}${link(lang, '/draft', t(lang, 'nav.draft'))}${link(lang, '/pros', t(lang, 'nav.pros'))}${link(lang, '/counters', t(lang, 'ctr.eyebrow'))}${link(lang, '/wiki', t(lang, 'nav.wiki'))}${link(lang, '/patches', t(lang, 'nav.patches'))}${link(lang, '/players', t(lang, 'nav.players'))}${link(lang, '/matches', t(lang, 'nav.matches'))}${link(lang, '/leaderboard', t(lang, 'nav.leaderboard'))}</nav>`;
 }
 
 function heroLinks(d: Data, lang: Lang, rows = d.rows) {
@@ -876,8 +909,30 @@ function pages(d: Data): PageDef[] {
   };
   const itemRef = (l: Lang, id: number) => (slugOf.has(id) ? link(l, `/items/${slugOf.get(id)}`, itemNameIn(l, id)) : esc(itemNameIn(l, id)));
 
+  // pro games as text (hero pages and /pros): who, result, K/D/A
+  const prosById = new Map(d.pros.map((p) => [p.id, p]));
+  const proLi = (l: Lang, g: ProGame, withHero: boolean) => {
+    const hero = withHero ? d.heroes.find((h) => h.id === g.player.hero_id) : undefined;
+    return `<li>${esc(g.pro.name)} (${REGION_TAG[g.pro.region]} #${g.pro.rank})${hero ? ` — ${link(l, `/heroes/${hero.slug}`, heroText(d, hero, l).name)}` : ''} — ${esc(
+      t(l, g.won ? 'player.win' : 'player.loss'),
+    )} · ${g.player.kills}/${g.player.deaths}/${g.player.assists} · ${g.match.match_id}</li>`;
+  };
+
   for (const hero of d.heroes) {
     const row = d.rows.find((r) => r.hero.id === hero.id);
+    const heroPros = proGames(d.proMatches.get(hero.id), prosById, enItemById, hero.id);
+    const proBuild = itemTally(heroPros).slice(0, 8);
+    const prosHtml = (l: Lang, name: string) =>
+      heroPros.length
+        ? `<h2>${esc(t(l, 'pros.onHero', { hero: name }))}</h2><ul>${heroPros
+            .slice(0, 8)
+            .map((g) => proLi(l, g, false))
+            .join('')}</ul>${proBuild.length ? `<p>${esc(t(l, 'pros.theyBuild'))}: ${proBuild.map((b) => `${itemRef(l, b.itemId)} ${pct(l, b.share)}`).join(', ')}</p>` : ''}<p>${link(
+            l,
+            '/pros',
+            t(l, 'pros.allGames'),
+          )}</p>`
+        : '';
     const base = `/heroes/${hero.slug}`;
     const titleOf = (l: Lang, tab: HeroTab) => {
       const h = heroText(d, hero, l);
@@ -988,7 +1043,7 @@ function pages(d: Data): PageDef[] {
                   .map((x) => `<li>${link(l, `/heroes/${x.hero.slug}`, heroText(d, x.hero, l).name)} +${pct(l, x.fx.delta)}</li>`)
                   .join('')}</ul>`
               : '') +
-            `<p>${link(l, `${base}/builds`, t(l, 'hb.eyebrow', { name }))}</p>${related(l)}`
+            `<p>${link(l, `${base}/builds`, t(l, 'hb.eyebrow', { name }))}</p>${prosHtml(l, name)}${related(l)}`
           );
         },
       },
@@ -1045,6 +1100,33 @@ function pages(d: Data): PageDef[] {
         },
       },
     );
+  }
+
+  // /pros: the newest pro games of the build (every hero's list, merged) and the pro list per region
+  if (d.pros.length) {
+    const latest = d.heroes
+      .flatMap((h) => proGames(d.proMatches.get(h.id), prosById, enItemById, h.id))
+      .sort((a, b) => b.at - a.at)
+      .slice(0, 25);
+    list.push({
+      path: '/pros',
+      title: (l) => t(l, 'meta.pros'),
+      description: (l) => t(l, 'meta.desc.pros'),
+      image: fallbackImage,
+      body: (l) =>
+        `<h1>${esc(t(l, 'pros.title'))}</h1><p>${esc(t(l, 'pros.sub'))}</p><p>${link(l, '/leaderboard', t(l, 'pros.toLeaderboard'))}</p>${navBlock(l)}` +
+        (latest.length ? `<h2>${esc(t(l, 'pros.recent'))}</h2><ul>${latest.map((g) => proLi(l, g, true)).join('')}</ul>` : '') +
+        PRO_REGIONS.map((r) => {
+          const inRegion = d.pros.filter((p) => p.region === r).sort((a, b) => a.rank - b.rank);
+          return inRegion.length
+            ? `<h2>${esc(t(l, 'pros.list'))} — ${esc(t(l, `lb.region.${r}` as MsgKey))}</h2><ol>${inRegion
+                .slice(0, 25)
+                .map((p) => `<li>#${p.rank} ${esc(p.name)}</li>`)
+                .join('')}</ol>`
+            : '';
+        }).join('') +
+        `<p>${esc(t(l, 'pros.about'))}</p>`,
+    });
   }
   return list;
 }
@@ -1165,6 +1247,10 @@ async function main() {
     console.warn(`[prerender] Deadlock API unavailable (${(e as Error).message}) — shipping the SPA without static pages`);
     return;
   }
+
+  // the pro list for /pros and the hero pages (the SPA builds it from the leaderboards only when this is missing)
+  if (data.pros.length) await write(PROS_FILE, JSON.stringify({ at: Date.now(), pros: data.pros } satisfies ProsFile));
+  console.log(`[prerender] ${data.pros.length} pro players, their games on ${[...data.proMatches.values()].filter((m) => m.length).length} heroes`);
 
   const list = pages(data);
   for (const page of list) for (const l of LANGS) await write(fileFor(pathForLang(page.path, l.id)), render(template, page, l.id));

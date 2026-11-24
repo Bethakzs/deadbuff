@@ -111,7 +111,9 @@ Main goals (in priority order):
 2. **Hero win-rate statistics** — sortable meta table + tier list, filterable by rank bracket and time window.
 3. **Hero pages** — what every ability does (description, cooldowns, T1/T2/T3 upgrades), popular skill order, core items, matchups, base stats, lore.
 4. Item stats (shop view + table + a page per item), a global build browser, match pages, patch impact
-   and the ranked leaderboard.
+   and the ranked leaderboard; a **pro tracker** (`/pros`: the newest games of the top 60 of every region's
+   leaderboard with hero, K/D/A and final build, private-lobby games = tournaments / scrims, who is playing now, the
+   pro meta; on every hero page the pros' games on that hero, who of them plays it and what they build).
 5. Player tools: **draft helper** (you + the enemies → what to build against them, against whom and why — from their
    kits and the items their players usually buy, checked against match data; teammates who cover you; a Lane mode
    with your two lane opponents; plus the best pick for your slot), **counter pages** per hero (`/counters/:slug`),
@@ -239,7 +241,8 @@ server/                          shared code (outside functions/ so it doesn't b
 ```
 - **Proxy** (`/api/dl`): GET only, sections `assets|analytics|builds|players|matches|leaderboard|patches`. Cache key =
   path + sorted query in `caches.default`. Per-section policy (`policy()`): fresh time (assets 6 h, analytics/patches
-  1 h, builds/leaderboard 15 min, steam profiles 1 h, player data 2 min, parsed match metadata 30 days) and a
+  1 h, builds/leaderboard 15 min, steam profiles 1 h, player data 2 min, parsed match metadata 30 days, the bulk
+  `matches/metadata` pro feed 5 min (+1 h stale), live `matches/active` 1 min (+5 min stale)) and a
   stale window during which the old copy is served instantly while a background refresh runs (player data and
   matches: none). Upstream 404 is cached 1 min; on upstream 5xx the stale copy wins. Every answer that came from
   the API carries `x-proxy-upstream: 1` (+ `x-cache: hit|stale|miss`); `lib/api.ts` treats a response WITHOUT
@@ -265,6 +268,10 @@ server/                          shared code (outside functions/ so it doesn't b
   - **Steam profiles** of every author shown (`account_ids` lists change as builds load, so not one file per query):
     `data/steam-0…7.json` (by `account_id % 8`, only `account_id / personaname / avatar / avatarmedium`); the index
     lists the account ids, and `fetchSteamProfiles()` uses the shards only when every requested id is there.
+  - pro tracker: `data/pros.json` (the pro list, ~20 KB — built from the 5 leaderboards + rank lookups, which are NOT
+    saved as snapshots) and each hero's pro games (`fetchProMatches` with the hero, 14 days, 40 games; "no games" is
+    saved as `[]`) — so the hero page's pro block costs no request. The /pros feed and live matches are not saved
+    (always through the proxy, fresh).
   - not saved: other rank / period filters, players, matches, leaderboard (hourly), build searches and tags.
   - `_headers` (generated): `/data/*` → `Cache-Control: public, max-age=300` + `X-Robots-Tag: noindex`.
   - Numbers with the default filters are therefore up to ~6 h old (rebuild every 6 h), like the prerendered pages.
@@ -380,6 +387,11 @@ src/
     steam.ts               SteamID64 ⇄ account_id, parseAccountInput() (links, SteamID3, ids) — also used by server/
     admin.ts               AdminStats / VisitStats types (copy of server/stats.ts), useAdminStats(), sendPageView() →
                            /api/nav (+ referrer and landing ?query once per page load), skipThisBrowser() (owner's browser), dayRange()
+    pros.ts                pro tracker: computePros() (top PROS_PER_REGION of each region's leaderboard → accounts,
+                           same-name entries resolved to the best-ranked account), PROS_FILE (dist/data/pros.json),
+                           feed windows (hero page 14 d / 40 games, /pros 3 d — lobbies 14 d — / 100), proGames()
+                           (rows: pro × match, final build = shop items kept), heroTally / proTally / itemTally,
+                           REGION_TAG
     sources.ts             /admin visit sources: sourceInfo(key) → kind (search / ai / social / partner / site / tag /
                            direct) + brand name (Google, Google app, ChatGPT, Twitch…), tagName(), readablePath()
     me.ts                  useMe() = linked Steam account of the logged-in user, else "It's me" (localStorage,
@@ -397,6 +409,7 @@ src/
   hooks/
     useAssets.ts           useHeroes / useItems / useRanks / usePatches (static data, cached forever,
                            fetched in the UI language; heroes merge English slugs with localised text)
+    usePros.ts             usePros() (static pros.json, else computePros()), useProMatches(query), useActiveMatches()
     useStats.ts            analytics hooks (hero stats, item stats, counters, synergy, ability orders,
                            build stats, builds, steam profiles). All keyed by the global filters. Plus
                            useHeroStatsAtRank() (dashboard / analysis), useTopItemStats() (Ascendant+ item timings),
@@ -406,7 +419,7 @@ src/
     usePlayer.ts           player queries: steam search, match history, per-hero stats (one or several accounts,
                            optional period), rank, teammates
   components/
-    Layout.tsx             sticky header (scroll-tinted): NAV (4 main tabs) + MoreMenu ("three lines" button with the
+    Layout.tsx             sticky header (scroll-tinted): NAV (6 main tabs) + MoreMenu ("three lines" button with the
                            MORE sections; inline in the mobile burger), AccountMenu ("Log in" button, or the avatar
                            with Dashboard / My profile / Compare / Account / Log out), LangSwitch (globe button →
                            dropdown of native language names), footer, Logo; mounts <FavoritesSync/>
@@ -431,6 +444,8 @@ src/
     BuildTagFilter.tsx     build-tag chips (shared by the hero Builds tab and the build browser)
     HeroCard.tsx           portrait card (forwardRef, layout="position"), cursor light, "gloat" art on hover
     HeroChip.tsx           HeroAvatar + HeroChip (avatar + name link)
+    ProGames.tsx           ProGameList (pro feed rows: result, hero, pro, K/D/A, souls, final build, time, match id →
+                           /matches/:id; "lobby" chip) + ProName (→ /players/:id, region tag + leaderboard place)
     ItemTable.tsx          sortable/filterable item stats table (hero page + items page)
     Html.tsx               renders sanitized API HTML
   pages/
@@ -452,7 +467,10 @@ src/
                            per-player rankings, kill matrix), Lanes (lane winners), Timeline (soul lead, objectives,
                            item timings). Rows of the profile marked "It’s me" get `.is-me` everywhere
     Patches.tsx            patch impact: patch picker (?patch=YYYY-MM-DD), winners / losers, full before/after table
-    Leaderboard.tsx        Valve ranked leaderboard: region switch (?region=), hero dropdown (?hero=slug)
+    Leaderboard.tsx        Valve ranked leaderboard: region switch (?region=), hero dropdown (?hero=slug); exports HeroSelect
+    Pros.tsx               /pros pro tracker: region (All / EU / NA / SA / ASIA / OCE), mode (all / ranked / lobby),
+                           hero filter (URL params); LiveGames (Watch-tab matches with pros, soul lead, spectators),
+                           the feed (ProGameList), aside "Pro meta" (heroes in the feed, click = filter) + the pro list
     Player.tsx             player profile (normal-mode matches only), "It's me" (hidden when Steam is linked),
                            "Compare with me". Exports MatchList (every row links to /matches/:id, or its
                            Analysis tab with `analysis`) and normalMatches()
@@ -490,7 +508,8 @@ src/
     NotFound.tsx
     hero/
       HeroPage.tsx         header (bg art, portrait, SVG name, stats) + sticky tabs; sets --hero colour on <html>
-      HeroOverview.tsx     abilities, skill order, most played builds | positions (role bars), core items, matchups, base stats
+      HeroOverview.tsx     abilities, skill order, most played builds, pro players (HeroPros) | positions (role bars), core items, matchups, base stats
+      HeroPros.tsx         the pros' games on the hero (14 days, build snapshot), "Who of the pros plays it", "What the pros build"
       HeroBuilds.tsx       Most played / Highest win rate / Trending + build-tag filter + "Show more" pagination
       HeroItems.tsx        ItemTable for this hero
       HeroMatchups.tsx     counters (vs) / synergies (with)
@@ -529,6 +548,7 @@ src/
 | `/account` | Account details, Steam link (`?steam=linked|taken|error` after the round trip), log out, delete (SPA only) |
 | `/patches` | Patch impact; `?patch=YYYY-MM-DD` picks an older patch |
 | `/leaderboard` | Ranked leaderboard; `?region=NAmerica` / `?hero=haze` |
+| `/pros` | Pro tracker; `?region=Europe` / `?mode=ranked|lobby` / `?hero=haze`. Main tab in the header since 25.11. Prerendered (newest pro games of the build + the pro list per region) |
 | `/builds` | Build browser |
 | `/players` | Player search (Steam name, profile link, SteamID64, SteamID3 or account id) |
 | `/players/:accountId` | Player profile: rank, recent form, match history, heroes, teammates; "It's me" button |
@@ -667,6 +687,8 @@ Description HTML contains `<span class="highlight">`, inline `<svg width="128">`
 | `GET /players/steam?account_ids=1,2,3` | persona names + avatars for build authors. |
 | `GET /players/hero-stats?account_ids=a,b&min_unix_timestamp=` | Per-hero career stats of several accounts in one call (rows carry `account_id`): matches_played, wins, K/D/A, `networth_per_min`, `damage_per_min`, `last_hits_per_min`, `accuracy`, `time_played`… (dashboard, compare) |
 | `GET /matches/{id}/metadata` | ~1 MB JSON, immutable → cached for the session. `assigned_lane` (1/4/6) gives lane duos; `objectives[]` = `{team (the OWNER of the structure), team_objective_id (0 = Patron), destroyed_time_s (0 = still standing)}`; `mid_boss[]` = Rejuvenator. `match_info.players[]`: team 0/1 (0 = Hidden King, 1 = Archmother), K/D/A, `net_worth`, `items[]` (`game_time_s`, `item_id`, `sold_time_s`) — ability unlocks/upgrades are in the same list, keep only `isShopItem`; `stats[]` snapshots (~every 3–5 min, last = end) with `player_damage`, `player_healing`, `net_worth`. 404 = not parsed yet |
+| `GET /matches/metadata` (bulk) | The pro feed: `account_ids` (≤ ~300 ids fit the URL; the proxy allows 4000 chars of query), `only_filtered_players=true`, `include_info=true`, `extra_player_columns=hero_id,team,kills,deaths,assists,net_worth,items.item_id,items.sold_time_s` (→ `items_item_id[]` / `items_sold_time_s[]`, abilities included — keep shop items not sold), `min_unix_timestamp`, `order_by=match_id&order_direction=desc`, `limit`; `hero_ids` keeps matches where ANYONE played the hero (filter rows by `hero_id`), `match_mode=private_lobby` = tournaments / scrims (full 6v6 lobbies of top players, 25–45 min). Rows: `start_time` "YYYY-MM-DD hh:mm:ss" UTC, `winning_team` / `team` "Team0"/"Team1", `match_mode` "Ranked" / "PrivateLobby". 404 = no matches. ~35 KB for 30 matches; rate limit is ClickHouse MB read ×5 |
+| `GET /matches/active` | Watch tab, top 200 live matches (~250 KB): `players[]` (`account_id`, `hero_id`, team 0/1), `start_time`, `net_worth_team_0/1`, `spectators`, `match_mode_parsed`, `region_mode_parsed`; `duration_s` is null → elapsed = now − start_time. The match page works only once the match ends and is parsed |
 | `GET /leaderboard/{region}[/{hero_id}]` | Regions `Europe | NAmerica | SAmerica | Asia | Oceania`. Entries: `rank`, `account_name`, `possible_account_ids` (Valve publishes only the NAME — a common one matches hundreds of accounts), `top_hero_ids` (empty on hero boards). Short right after a ranked season starts |
 | `GET /players/rank?account_ids=` | Rank of up to 1000 accounts in one call (`badge`, `last_match.start_time`; `badge: 0` = unranked). The leaderboard uses it to resolve a shared name to the highest-ranked account — only for entries with ≤ 32 candidates and ≤ 400 ids per board, chunked 200 per request (URL length); busier names stay unlinked |
 | `GET /patches/big-days` | ISO timestamps of big patch days, newest first. `/patches` titles carry the real patch date ("09-29-2026 Update") — the post's `pub_date` can be weeks later |
@@ -783,8 +805,8 @@ Rules:
 5. **Surfaces**: `.panel` (gradient + brass top hairline), `border-radius: var(--radius-lg)` for cards, chamfered `clip-path` for primary buttons (`.btn--brass`) and tier badges.
 6. **Atmosphere**: `body::before` film grain and `body::after` radial glow are global — don't add more full-screen effects.
 7. Images: always prefer `*_webp`; use `loading="lazy"` except above-the-fold hero art.
-8. Responsive breakpoints used: 1100px (sidebars collapse), 900px (header nav → burger menu; the header search box
-   shrinks first above it), 860px (hero header stacks, tabs bar un-sticks), 720/640px (tables hide `.hide-sm`, grids shrink). `.hide-md` hides < 1000px. Verify 375px width has **no horizontal scroll**.
+8. Responsive breakpoints used: 1100px (sidebars collapse), 1080px (header nav → burger menu since 25.11: 6 main
+   tabs + search + account + language need ~1045px; the header search box shrinks first above it), 860px (hero header stacks, tabs bar un-sticks), 720/640px (tables hide `.hide-sm`, grids shrink). `.hide-md` hides < 1000px. Verify 375px width has **no horizontal scroll**.
 
 ### Motion conventions
 * Easing: `[0.22, 1, 0.36, 1]` (ease-out-quint) for almost everything; springs (`stiffness ~400-500, damping ~36-40`) for pills/underlines using `layoutId`.
@@ -811,8 +833,9 @@ Rules:
 * Skill-order grid (`.skill-grid`) has `overflow-x: auto`, which clips anything drawn outside its box — keep its
   small inner padding so the ability icon rings on the left aren't cut off.
 * Hero → Builds tab has no explanatory blurb under the title (removed on request) — just the mode switch and tag chips.
-* Header nav (owner's request): main tabs **Tier list, Heroes, Builds, Items, Draft** (Draft since 24.11, short label
-  `nav.draftShort`); then a "three lines" button that opens
+* Header nav (owner's request): main tabs **Tier list, Heroes, Builds, Items, Draft, Pros** (Draft since 24.11, short
+  label `nav.draftShort`; Pros since 25.11 — "a tab if it fits": it fits from 1081px, below that the burger); then a
+  "three lines" button that opens
   Wiki, Patches, Players, Matches, Leaderboard (`NAV` / `MORE` in `Layout.tsx`; the button gets the nav underline when one
   of them is open). In the mobile burger all of them are listed. Mirrored in the prerender `navBlock()`.
 * Items without stats for the current filters are not shown in the shop (owner: no "no data" cells), and the prerender
@@ -1020,6 +1043,9 @@ Rules:
 - У профілі героя картки здібностей згорнуті: видно іконку, назву й короткий опис, решта розкривається кліком
 - `/patches` — вплив патчу: вінрейт/пікрейт героїв за тиждень до і після кожного оновлення, хто виграв / програв
 - `/leaderboard` — рейтингова таблиця Valve по регіонах, загальна або по герою
+- `/pros` — **про-трекер**: останні ігри топ-60 рейтингу кожного регіону (герой, K/D/A, фінальна збірка, номер матчу
+  → сторінка матчу), фільтри регіон / рейтингові / лобі (турніри й скріми) / герой, «Зараз грають», мета серед про;
+  на сторінці кожного героя внизу — ігри про на ньому, хто з про грає і що збирають
 - `/builds` — браузер білдів (герой, сортування, пошук, фільтр за тегами, пагінація)
 - `/players`, `/players/:id` — пошук гравця і профіль (ранг, форма, матчі, герої, тімейти), кнопка «Це я»,
   «Порівняти зі мною»
@@ -1099,6 +1125,7 @@ Rules:
 | Twitch-набір | ✅ 17.11: `twitch-kit/` — 10 панелей, банер профілю, офлайн-банер, плашка для OBS у стилі сайту + інструкція (`twitch-kit/README.md`). Генерується з `twitch-kit/src/kit.html` через headless Chrome, у збірку сайту не входить. Власник поставив лише панель Deadbuff і попросив решту «у своєму стилі, не Deadlock» → 17.11: `twitch-kit/panels-bethak/` — 8 панелей у стилі його банера (нічна кімната, фіолетовий неон, крейда з короною, шматки банера), з `twitch-kit/src/bethak.html`. Ще не закомічено — **власнику:** вирішити, чи тримати в репозиторії |
 | Драфт і адмінка 24.11 | ✅ Запушено 24.11 (`92352cc`): драфт «спершу предмети» + «Лінія» + тімейти, «Драфт» у шапці, ніки Steam в адмінці (розділ 6, п. 34). Збірка — 2190 сторінок. На живому сайті перевірено: «Драфт» п'ятою вкладкою в шапці, Віндікта проти Пейдж/Сон/Швейцар/Севен/Абрамс/Гейз — предмети з причинами, «Струс · 35%» і попередження про повітря. Ніки Steam у нових реєстраціях — перевірити на першій новій реєстрації |
 | Драфт + адмінка 25.11 | ✅ Запушено 25.11 (`efc9bd1`): перемикач «Своя команда» в драфті (розділ 6, п. 35); джерела візитів — блок «Звідки приходять», плашки джерела, мітки `?ref=…` (п. 36); місто, область, провайдер у візитах (п. 37). Збірка — 2190 сторінок, на живому сайті нова версія за ~70 с. Нові колонки в D1 додаються з першим візитом після пушу. **Власнику:** відкрити `/admin` і глянути «Звідки приходять» та «Хто заходить» — нові дані з'являтимуться з нових візитів |
+| Про-гравці 25.11 | ⏳ Зроблено локально, **не запушено**: вкладка й сторінка `/pros`, блок про на сторінках героїв (розділ 6, п. 38). Збірка — 2195 сторінок, 241 про, їхні ігри на 44 героях |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
 підробленої cookie, унікальність логіна без урахування регістру (і для кирилиці), проксі (повторний запит 0,8 с → 0,008 с),
@@ -1490,6 +1517,26 @@ deadbuff.net (Twitch-панель, Reddit, Discord, опис репозитор�
     зберігається. Назви міст — англійською, як їх дає Cloudflare. Колонки `visits.city / region / isp` додаються в
     D1 самі. Перевірено локально (wrangler + D1, UA / DE, 800 px і 375 px без горизонтального скролу). Старі візити
     — лише країна
+38. **25.11 — про-гравці (pro tracker).** Запит: «логіка з про-плеєрами, може табу, якщо вона поміщається, типу
+    dota pro tracker: бачити останні ігри про-гравців; на сторінці героя знизу — про-гравці на цьому герої і їхні ігри
+    (круто б офіційні ігри); матч-айді веде на мій сайт; і ще логіки з про-плеєрами, якщо можна». Що є в API:
+    **офіційного списку про й турнірних матчів немає**. Тому «про» = **топ-60 рейтингу Valve у кожному з 5 регіонів**
+    (241 акаунт на 25.11; ніки, які мають кілька акаунтів, зводяться до найвищого рангу, як у таблиці лідерів).
+    «Офіційні» ігри — найближче до них **приватні лобі**: топ-гравці грають там 6×6 по 25–45 хв (турніри й скріми) —
+    окремий фільтр «Лобі». Зроблено: (1) вкладка **«Про-гравці»** в шапці (шоста; влазить від 1081 px, нижче — у
+    меню «три лінії», тож поріг меню піднято з 900 до 1080 px). (2) Сторінка **`/pros`**: «Зараз грають» (живі матчі
+    з топ-200 вкладки «Дивитися» в грі, де є про: герой, перевага команди в душах, глядачі); «Останні ігри» за 3 дні
+    (лобі — за 14): результат, герой, про (EU #5 — регіон і місце в рейтингу, посилання на профіль), K/D/A, душі,
+    **фінальна збірка**, тривалість, коли, **номер матчу → сторінка матчу на сайті**; фільтри регіон / тип гри
+    (усі / рейтингові / лобі) / герой; збоку «Мета серед про» (які герої в цих іграх, вінрейт, клік = фільтр) і список
+    про з їхніми топ-героями. (3) **На сторінці кожного героя внизу** (вкладка «Огляд»): ігри про на цьому герої за 2
+    тижні, «Хто з про грає» (ігри, вінрейт, KDA) і «Що збирають про» (частка ігор із предметом у фінальній збірці).
+    Цей блок рахується під час збірки сайту (статичний файл) — сторінки героїв, як і раніше, не роблять запитів;
+    `/pros` і «Зараз грають» — живі, через проксі (кеш 5 хв / 1 хв). Статичний текст для Google: на сторінках героїв
+    — ігри про й що вони збирають, нова сторінка `/pros` у sitemap. Перевірено локально (UA / DE / EN / RU / ES,
+    1081 / 1000 / 375 px без горизонтального скролу; номер матчу відкриває матч). Ідеї на потім: збірки про по
+    героях детальніше (порядок покупки, таймінги), профіль про з його героями, «про проти про» в одному матчі,
+    сповіщення, коли улюблений про в грі
 29. **18.11 — статистика без власника + візити детально.** Запит: «щоб моя статистика не показувалась (з мого
     акаунта)» і «трекати, хто на які сторінки заходить — з однією сесією чи з різними, щоб бачити, що перегляди не
     накручують»; старий розділ «Відвідування» лишити, детальніше — нижче. Зроблено: `/api/nav` не рахує акаунти з
@@ -1823,3 +1870,6 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   пошукові слова; міграція колонок D1 (розділ 6, п. 36); оновлено розділи 1, 2, 6 і Частину I (§3 бекенд, §4 файли, маршрути)
 - **25.11.2026** — місто, область і провайдер у візитах з геолокації Cloudflare, підпис «мова сайту» (розділ 6, п. 37);
   оновлено розділи 1, 2, 6 і Частину I (§3 бекенд, §4 файли, маршрути)
+- **25.11.2026 (друга частина)** — про-гравці: вкладка й сторінка `/pros`, блок про на сторінках героїв, поріг
+  меню-бургера 1080 px (розділ 6, п. 38); оновлено розділи 1, 2, 6 і Частину I (§1, §3 проксі й знімки, §4 файли,
+  маршрути, API, шапка, брейкпоінти)

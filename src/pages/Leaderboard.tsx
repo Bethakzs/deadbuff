@@ -20,8 +20,8 @@ export const REGIONS: Region[] = ['Europe', 'NAmerica', 'SAmerica', 'Asia', 'Oce
 const MAX_CANDIDATES = 32;
 const MAX_LOOKUPS = 400;
 
-/** Dropdown: overall leaderboard or one hero's. */
-function HeroSelect({ value, onChange }: { value?: Hero; onChange: (h?: Hero) => void }) {
+/** Dropdown: overall leaderboard or one hero's (also the /pros hero filter). */
+export function HeroSelect({ value, onChange }: { value?: Hero; onChange: (h?: Hero) => void }) {
   const { t } = useT();
   const heroes = useHeroes();
   const [open, setOpen] = useState(false);

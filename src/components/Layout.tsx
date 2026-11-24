@@ -20,6 +20,7 @@ const NAV: NavItem[] = [
   { to: '/builds', key: 'nav.builds' },
   { to: '/items', key: 'nav.items' },
   { to: '/draft', key: 'nav.draftShort' },
+  { to: '/pros', key: 'nav.pros' },
 ];
 
 /** Secondary sections behind the "three lines" menu at the end of the nav (owner's request). */
