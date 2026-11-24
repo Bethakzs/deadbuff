@@ -245,22 +245,27 @@ export function HomePage() {
       <section className="banner">
         <div className="container banner__inner">
           <div className="banner__copy">
-            <motion.span className="eyebrow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-              <Diamond /> {t('home.eyebrow')}
-            </motion.span>
-            <h1 className="display banner__title">
-              {titleLines.map((key, i) => (
-                <span className="banner__line" key={key}>
-                  <motion.span
-                    initial={{ y: '105%' }}
-                    animate={{ y: 0 }}
-                    transition={{ delay: 0.12 + i * 0.09, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-                    className={i === 2 ? 'banner__accent' : ''}
-                  >
-                    {t(key)}
-                  </motion.span>
-                </span>
-              ))}
+            {/* the h1 carries the brand + the eyebrow, so search engines read "Deadbuff — Deadlock stats…" as the heading */}
+            <h1 className="banner__h1">
+              <span className="sr-only">Deadbuff — </span>
+              <motion.span className="eyebrow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+                <Diamond /> {t('home.eyebrow')}
+              </motion.span>
+              <span className="sr-only"> — </span>
+              <span className="display banner__title">
+                {titleLines.map((key, i) => (
+                  <span className="banner__line" key={key}>
+                    <motion.span
+                      initial={{ y: '105%' }}
+                      animate={{ y: 0 }}
+                      transition={{ delay: 0.12 + i * 0.09, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+                      className={i === 2 ? 'banner__accent' : ''}
+                    >
+                      {t(key)}
+                    </motion.span>
+                  </span>
+                ))}
+              </span>
             </h1>
             <motion.p className="banner__lead" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45, duration: 0.5 }}>
               {t('home.lead')}

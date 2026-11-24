@@ -619,7 +619,7 @@ function pages(d: Data): PageDef[] {
       description: (l) => t(l, 'meta.desc.home'),
       image: fallbackImage,
       body: (l) =>
-        `<h1>${esc(`${t(l, 'home.title1')} ${t(l, 'home.title2')} ${t(l, 'home.title3')}`)}</h1><p>${esc(t(l, 'home.lead'))}</p>${navBlock(l)}<h2>${esc(t(l, 'home.pickHero'))}</h2>${heroLinks(d, l, byWr)}`,
+        `<h1>${esc(`Deadbuff — ${t(l, 'home.eyebrow')} — ${t(l, 'home.title1')} ${t(l, 'home.title2')} ${t(l, 'home.title3')}`)}</h1><p>${esc(t(l, 'home.lead'))}</p>${navBlock(l)}<h2>${esc(t(l, 'home.pickHero'))}</h2>${heroLinks(d, l, byWr)}`,
     },
     {
       path: '/heroes',
@@ -1079,14 +1079,36 @@ function render(template: string, page: PageDef, lang: Lang) {
   );
   if (page.image) head.push(`<meta property="og:image" content="${esc(page.image)}" />`, `<meta name="twitter:image" content="${esc(page.image)}" />`);
   if (page.path === '/' && SITE_URL) {
+    // brand signals for Google: the site name (WebSite at the domain root, same @id in every language — /uk etc.
+    // point at the root too) and who runs it. Add Deadbuff's own profiles (Reddit, Discord, X…) to sameAs when they exist
+    const home = `${SITE_URL}/`;
+    const twitch = 'https://www.twitch.tv/bethakzs';
     head.push(
       `<script type="application/ld+json">${JSON.stringify({
         '@context': 'https://schema.org',
-        '@type': 'WebSite',
-        name: 'Deadbuff',
-        url: abs(url),
-        inLanguage: meta.locale,
-        description,
+        '@graph': [
+          {
+            '@type': 'WebSite',
+            '@id': `${home}#website`,
+            name: 'Deadbuff',
+            alternateName: ['DeadBuff', 'deadbuff.net'],
+            url: home,
+            inLanguage: meta.locale,
+            description,
+            about: { '@type': 'VideoGame', name: 'Deadlock' },
+            publisher: { '@id': `${home}#organization` },
+          },
+          {
+            '@type': 'Organization',
+            '@id': `${home}#organization`,
+            name: 'Deadbuff',
+            alternateName: 'deadbuff.net',
+            url: home,
+            logo: `${SITE_URL}/favicon-192.png`,
+            sameAs: ['https://github.com/Bethakzs/deadbuff'],
+            founder: { '@type': 'Person', name: 'BethakZS', url: twitch, sameAs: [twitch] },
+          },
+        ],
       }).replace(/</g, '\\u003c')}</script>`,
     );
   }

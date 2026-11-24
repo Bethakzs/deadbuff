@@ -11,3 +11,6 @@ dist
 
 # wrangler local state (local D1 database)
 .wrangler/
+
+# Search Console exports for sessions (local only)
+gsc/
