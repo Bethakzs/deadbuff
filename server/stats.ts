@@ -7,7 +7,9 @@
  *   day_visitors  unique visitors per day — SHA-256(day + IP + user agent + SESSION_SECRET), truncated:
  *                 no cookie, a new value every day, can't be turned back into an IP
  *   visits        one row per visit: the same daily visitor hash with < 30 min between pages; device,
- *                 browser, country, referrer host and the account when logged in
+ *                 browser, country + rough city / region / ISP from the IP (Cloudflare; the IP itself is never
+ *                 stored), the account when logged in and where it came from: referrer host (+ its page path
+ *                 when the site sends it), search words (rarely passed), the landing link's tags
  *   visit_pages   the pages of each visit in order (path without the language prefix, seconds)
  *
  * The owner's own activity is never shown: /api/nav skips accounts listed in ADMIN_USERS (and the SPA
@@ -59,16 +61,97 @@ export function normalizePath(raw: unknown): string | null {
   return /^\/[a-z0-9\-/:]{0,120}$/.test(p) && !ADMIN_PATHS.includes(p) ? p : null;
 }
 
-/** Host of an external referrer ("https://www.twitch.tv/x" → "twitch.tv"), null for our own pages and junk. */
-export function refHost(raw: unknown, req: Request): string | null {
-  if (typeof raw !== 'string' || !raw || raw.length > 500) return null;
-  try {
-    const host = new URL(raw).hostname.toLowerCase().replace(/^www\./, '');
-    const self = new URL(req.url).hostname.toLowerCase().replace(/^www\./, '');
-    return host && host !== self && /^[a-z0-9.-]{1,80}$/.test(host) ? host : null;
-  } catch {
-    return null;
+/** Where a visit came from — everything the browser tells, which is little: Google never passes the search words. */
+export interface Source {
+  /** external referrer host ("twitch.tv"; an app id like "com.google.android.googlequicksearchbox"), null = none */
+  ref: string | null;
+  /** the referrer's page path, when that site sends it (most send only the domain) */
+  refPath: string | null;
+  /** search words, when the search engine passes them or the link has utm_term */
+  term: string | null;
+  /** tags of the landing link: "ref=twitch", "utm_source=chatgpt.com", "via=facebook" (ad / app click id) */
+  tag: string | null;
+}
+
+/** Search engines whose referrer may carry the words (`q`, `p`, `text`…); other sites' `?p=` is not a search. */
+const SEARCH_HOST = /(^|\.)(google|bing|yahoo|duckduckgo|yandex|ya|ecosia|baidu|naver|qwant|startpage|seznam|brave)\.[a-z.]+$/;
+const TERM_KEYS = ['q', 'query', 'text', 'p', 'wd'];
+/** Landing-link tags: the owner's own links (?ref=twitch) and UTM tags that apps add (ChatGPT: utm_source=chatgpt.com). */
+const TAG_KEYS = ['ref', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'src', 'source', 'from'];
+/** Ad / app click ids: the value is a tracking token, only the platform is kept. */
+const CLICK_IDS: Record<string, string> = {
+  fbclid: 'facebook',
+  igshid: 'instagram',
+  gclid: 'google-ads',
+  msclkid: 'bing-ads',
+  yclid: 'yandex',
+  ttclid: 'tiktok',
+  twclid: 'x',
+};
+
+const clean = (s: string | null, max: number) => {
+  // eslint-disable-next-line no-control-regex
+  const v = (s ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return v ? v.slice(0, max) : null;
+};
+
+/**
+ * `rawRef` = document.referrer, `rawQuery` = the landing page's `?query` (both from the first view of a page
+ * load). Our own pages and junk give nulls. Referrer query strings are dropped (they can hold tokens) except
+ * a search engine's words.
+ */
+export function visitSource(rawRef: unknown, rawQuery: unknown, req: Request): Source {
+  const out: Source = { ref: null, refPath: null, term: null, tag: null };
+  if (typeof rawRef === 'string' && rawRef && rawRef.length <= 500) {
+    try {
+      const u = new URL(rawRef);
+      const host = u.hostname.toLowerCase().replace(/^www\./, '');
+      const self = new URL(req.url).hostname.toLowerCase().replace(/^www\./, '');
+      if (host && host !== self && /^[a-z0-9.-]{1,80}$/.test(host)) {
+        out.ref = host;
+        if (SEARCH_HOST.test(host)) {
+          for (const k of TERM_KEYS) out.term ??= clean(u.searchParams.get(k), 80);
+        } else if (/^https?:$/.test(u.protocol)) {
+          const path = u.pathname.replace(/\/+$/, '');
+          if (path.length > 1 && path.length <= 150 && /^\/[\w\-./~%@:+!,;=()']*$/.test(path)) out.refPath = path;
+        }
+      }
+    } catch {
+      /* junk */
+    }
   }
+  if (typeof rawQuery === 'string' && rawQuery.length > 1 && rawQuery.length <= 400) {
+    const p = new URLSearchParams(rawQuery);
+    const tags: string[] = [];
+    for (const k of TAG_KEYS) {
+      const v = clean(p.get(k), 60);
+      if (v) tags.push(`${k}=${v}`);
+    }
+    for (const [k, name] of Object.entries(CLICK_IDS)) if (p.has(k)) tags.push(`via=${name}`);
+    if (tags.length) out.tag = tags.join(' · ').slice(0, 200);
+    out.term ??= clean(p.get('utm_term'), 80);
+  }
+  return out;
+}
+
+/**
+ * Rough place of a visit from Cloudflare's IP geolocation (`request.cf`, free on every plan): country, city,
+ * region and the network's owner (ISP / mobile operator). City is a best guess — often the provider's hub, not
+ * where the person is; a VPN shows the VPN's place. Coordinates and postal codes are not kept: the IP doesn't
+ * know them for real and they would only pretend to be precise.
+ */
+export interface Geo {
+  country: string | null;
+  city: string | null;
+  region: string | null;
+  isp: string | null;
+}
+
+export function visitGeo(req: Request): Geo {
+  const cf = req.cf as Record<string, unknown> | undefined;
+  const text = (k: string) => clean(typeof cf?.[k] === 'string' ? (cf[k] as string) : null, 60);
+  const country = typeof cf?.country === 'string' && /^[A-Z][A-Z0-9]$/.test(cf.country) ? cf.country : null;
+  return { country, city: text('city'), region: text('region'), isp: text('asOrganization') };
 }
 
 /** Device type, browser and OS from the user agent — rough on purpose, only for the owner's breakdowns. */
@@ -120,10 +203,10 @@ export interface View {
   vid: string;
   /** logged-in account, if any */
   userId: number | null;
-  country: string | null;
+  geo: Geo;
   ua: string;
-  /** external referrer host (first page of a page load only) */
-  ref: string | null;
+  /** where the page load came from (first page of a page load only, else all null) */
+  source: Source;
 }
 
 /** A new visit starts after this long without a page view. */
@@ -148,7 +231,18 @@ export function recordView(db: D1Database, v: View) {
       if (open) {
         await db.batch([
           ...counters,
-          db.prepare('UPDATE visits SET last_at = ?2, views = views + 1, user_id = COALESCE(?3, user_id) WHERE id = ?1').bind(open.id, now, v.userId),
+          // a visit without a source takes the first one that comes later (direct, then a new tab from Google
+          // within 30 minutes); a known source is never overwritten
+          db
+            .prepare(
+              `UPDATE visits SET last_at = ?2, views = views + 1, user_id = COALESCE(?3, user_id),
+                 ref = CASE WHEN ref IS NULL AND tag IS NULL THEN ?4 ELSE ref END,
+                 ref_path = CASE WHEN ref IS NULL AND tag IS NULL THEN ?5 ELSE ref_path END,
+                 tag = CASE WHEN ref IS NULL AND tag IS NULL THEN ?6 ELSE tag END,
+                 term = COALESCE(term, ?7)
+               WHERE id = ?1`,
+            )
+            .bind(open.id, now, v.userId, v.source.ref, v.source.refPath, v.source.tag, v.source.term),
           // n = the visit's new view count (same transaction, so two quick views can't clash)
           db.prepare('INSERT INTO visit_pages (visit_id, n, at, path) SELECT id, views, ?2, ?3 FROM visits WHERE id = ?1').bind(open.id, now, bare),
         ]);
@@ -158,10 +252,28 @@ export function recordView(db: D1Database, v: View) {
           ...counters,
           db
             .prepare(
-              `INSERT INTO visits (day, vid, user_id, started_at, last_at, views, lang, country, device, browser, os, ref)
-               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO visits (day, vid, user_id, started_at, last_at, views, lang, country, city, region, isp, device, browser, os, ref, ref_path, term, tag)
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
-            .bind(day, v.vid, v.userId, now, now, lang, v.country, ua.device, ua.browser, ua.os, v.ref),
+            .bind(
+              day,
+              v.vid,
+              v.userId,
+              now,
+              now,
+              lang,
+              v.geo.country,
+              v.geo.city,
+              v.geo.region,
+              v.geo.isp,
+              ua.device,
+              ua.browser,
+              ua.os,
+              v.source.ref,
+              v.source.refPath,
+              v.source.term,
+              v.source.tag,
+            ),
           db.prepare('INSERT INTO visit_pages (visit_id, n, at, path) VALUES (last_insert_rowid(), 1, ?, ?)').bind(now, bare),
         ]);
       }
@@ -227,8 +339,19 @@ export interface VisitStats {
   pages: { path: string; views: number; visitors: number; sessions: number; top: number }[];
   /** most active visitors of the period */
   people: Visitor[];
+  /** key = referrer host, "#<tags>" for a tagged link without a referrer, "" = direct (the SPA names and groups them) */
   sources: Count[];
+  /** first page of the visits per source key (same keys as `sources`) */
+  landings: { key: string; path: string; n: number }[];
+  /** landing-link tags ("ref=twitch"), referrer pages ("reddit.com/r/…") and search words, most common first */
+  tags: Count[];
+  refPages: Count[];
+  terms: Count[];
   countries: Count[];
+  /** key = "UA|Kyiv" (country code | city) */
+  cities: Count[];
+  /** network owners: ISPs, mobile operators, VPN / hosting companies */
+  isps: Count[];
   devices: Count[];
   browsers: Count[];
   systems: Count[];
@@ -252,6 +375,7 @@ export interface Visitor {
   /** distinct pages */
   pages: number;
   country: string | null;
+  city: string | null;
   device: string;
   browser: string;
   os: string;
@@ -268,10 +392,17 @@ export interface Visit {
   views: number;
   lang: string;
   country: string | null;
+  /** rough place from the IP (Cloudflare): city, region, network owner — see visitGeo */
+  city: string | null;
+  region: string | null;
+  isp: string | null;
   device: string;
   browser: string;
   os: string;
   ref: string | null;
+  refPath: string | null;
+  term: string | null;
+  tag: string | null;
   /** pages in order, t = seconds since the visit started */
   pages: { path: string; t: number }[];
 }
@@ -279,11 +410,16 @@ export interface Visit {
 /** Short visitor label shown on /admin (the full hash never leaves the server). */
 const label = (vid: string) => vid.slice(0, 6);
 
+/** Source of a visit for grouping: the referrer host, else the tagged link ("#ref=twitch"), else "" (direct). */
+const SOURCE_KEY = `COALESCE(v.ref, '#' || v.tag, '')`;
+
 /** Statements for the visits section: ?1 = first day, ?2 = JSON array of admin user ids. */
 function visitStatements(db: D1Database, sinceDay: string, adminIds: string) {
   const own = 'v.day >= ?1 AND COALESCE(v.user_id, 0) NOT IN (SELECT value FROM json_each(?2))';
-  const count = (col: string) =>
-    db.prepare(`SELECT COALESCE(v.${col}, '') AS key, COUNT(*) AS n FROM visits v WHERE ${own} GROUP BY key ORDER BY n DESC LIMIT 10`).bind(sinceDay, adminIds);
+  const count = (expr: string, limit = 10, where = '') =>
+    db
+      .prepare(`SELECT COALESCE(${expr}, '') AS key, COUNT(*) AS n FROM visits v WHERE ${own} ${where} GROUP BY key ORDER BY n DESC LIMIT ${limit}`)
+      .bind(sinceDay, adminIds);
   return [
     db
       .prepare(
@@ -307,20 +443,32 @@ function visitStatements(db: D1Database, sinceDay: string, adminIds: string) {
       .prepare(
         `SELECT v.vid AS id, MIN(v.day) AS day, MAX(u.username) AS username, MAX(u.account_id) AS accountId, SUM(v.views) AS views, COUNT(*) AS sessions,
                 (SELECT COUNT(DISTINCT p.path) FROM visits w JOIN visit_pages p ON p.visit_id = w.id WHERE w.vid = v.vid) AS pages,
-                MAX(v.country) AS country, MAX(v.device) AS device, MAX(v.browser) AS browser, MAX(v.os) AS os, MAX(v.last_at) AS lastAt
+                MAX(v.country) AS country, MAX(v.city) AS city, MAX(v.device) AS device, MAX(v.browser) AS browser, MAX(v.os) AS os, MAX(v.last_at) AS lastAt
          FROM visits v LEFT JOIN users u ON u.id = v.user_id
          WHERE ${own} GROUP BY v.vid ORDER BY views DESC, lastAt DESC LIMIT 12`,
       )
       .bind(sinceDay, adminIds),
-    count('ref'),
-    count('country'),
-    count('device'),
-    count('browser'),
-    count('os'),
+    count(SOURCE_KEY, 40),
+    db
+      .prepare(
+        `SELECT ${SOURCE_KEY} AS key, p.path AS path, COUNT(*) AS n
+         FROM visits v JOIN visit_pages p ON p.visit_id = v.id AND p.n = 1
+         WHERE ${own} GROUP BY key, p.path ORDER BY n DESC LIMIT 150`,
+      )
+      .bind(sinceDay, adminIds),
+    count('v.tag', 10, 'AND v.tag IS NOT NULL'),
+    count(`v.ref || v.ref_path`, 10, 'AND v.ref_path IS NOT NULL'),
+    count('v.term', 10, 'AND v.term IS NOT NULL'),
+    count('v.country'),
+    count(`COALESCE(v.country, '') || '|' || v.city`, 12, 'AND v.city IS NOT NULL'),
+    count('v.isp', 10, 'AND v.isp IS NOT NULL'),
+    count('v.device'),
+    count('v.browser'),
+    count('v.os'),
     db
       .prepare(
         `SELECT v.id, v.vid AS visitor, u.username, u.account_id AS accountId, v.started_at AS startedAt, v.last_at AS lastAt, v.views, v.lang,
-                v.country, v.device, v.browser, v.os, v.ref,
+                v.country, v.city, v.region, v.isp, v.device, v.browser, v.os, v.ref, v.ref_path AS refPath, v.term, v.tag,
                 (SELECT group_concat(x, ' ') FROM (
                    SELECT p.path || ',' || (p.at - v.started_at) AS x FROM visit_pages p WHERE p.visit_id = v.id ORDER BY p.n LIMIT 40
                  )) AS pages
@@ -395,7 +543,7 @@ export async function adminStats(db: D1Database, days: number, adminIds: number[
   }
   const daysRows = rows<{ day: string; views: number; visitors: number }>(byDay);
 
-  const [vSum, vPages, vPeople, vSources, vCountries, vDevices, vBrowsers, vSystems, vRecent, vSince] = visitRes;
+  const [vSum, vPages, vPeople, vSources, vLandings, vTags, vRefPages, vTerms, vCountries, vCities, vIsps, vDevices, vBrowsers, vSystems, vRecent, vSince] = visitRes;
   const vs = first<Record<string, number>>(vSum);
   const visits: VisitStats = {
     since: first<{ day: string | null }>(vSince).day ?? null,
@@ -408,7 +556,13 @@ export async function adminStats(db: D1Database, days: number, adminIds: number[
     pages: rows(vPages),
     people: rows<Visitor>(vPeople).map((r) => ({ ...r, id: label(r.id) })),
     sources: rows(vSources),
+    landings: rows(vLandings),
+    tags: rows(vTags),
+    refPages: rows(vRefPages),
+    terms: rows(vTerms),
     countries: rows(vCountries),
+    cities: rows(vCities),
+    isps: rows(vIsps),
     devices: rows(vDevices),
     browsers: rows(vBrowsers),
     systems: rows(vSystems),

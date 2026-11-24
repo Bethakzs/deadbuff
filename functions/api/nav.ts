@@ -1,7 +1,8 @@
 /*
- * POST /api/nav {"p":"/uk/heroes/haze","r":"https://www.twitch.tv/…"} — one page view, sent by the SPA with
- * navigator.sendBeacon on every route change (production builds only; `r` = document.referrer, first view of a
- * page load only). Always answers 204: the page never waits for it or sees errors.
+ * POST /api/nav {"p":"/uk/heroes/haze","r":"https://www.twitch.tv/…","q":"?ref=twitch"} — one page view, sent by
+ * the SPA with navigator.sendBeacon on every route change (production builds only; `r` = document.referrer and
+ * `q` = the landing page's query string, first view of a page load only). Always answers 204: the page never
+ * waits for it or sees errors.
  * Bots, other origins, odd paths, /admin and the owner's accounts (ADMIN_USERS) are dropped. No cookie is set:
  * unique visitors and visits are a salted daily hash (server/stats.ts); the session cookie, when there is one,
  * only tells whose visit it is. robots.txt disallows /api/ except /api/dl/, so Googlebot's renders don't count.
@@ -11,7 +12,7 @@ import { userById } from '../../server/db';
 import { accountEnv, type Fn } from '../../server/env';
 import { sameOrigin } from '../../server/http';
 import { readSession } from '../../server/session';
-import { isBot, normalizePath, recordView, refHost, visitorId } from '../../server/stats';
+import { isBot, normalizePath, recordView, visitGeo, visitSource, visitorId } from '../../server/stats';
 
 const done = () => new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 
@@ -20,15 +21,15 @@ export const onRequestPost: Fn = async ({ request, env, waitUntil }) => {
   if (!ctx || !sameOrigin(request) || isBot(request)) return done();
   const text = await request.text().catch(() => '');
   if (!text || text.length > 1000) return done();
-  let body: { p?: unknown; r?: unknown };
+  let body: { p?: unknown; r?: unknown; q?: unknown };
   try {
-    body = JSON.parse(text) as { p?: unknown; r?: unknown };
+    body = JSON.parse(text) as { p?: unknown; r?: unknown; q?: unknown };
   } catch {
     return done();
   }
   const path = normalizePath(body?.p);
   if (!path) return done();
-  const country = (request.cf as { country?: unknown } | undefined)?.country;
+  const geo = visitGeo(request);
   const ua = request.headers.get('user-agent') ?? '';
   waitUntil(
     (async () => {
@@ -40,9 +41,9 @@ export const onRequestPost: Fn = async ({ request, env, waitUntil }) => {
         path,
         vid,
         userId: user?.id ?? null,
-        country: typeof country === 'string' && /^[A-Z][A-Z0-9]$/.test(country) ? country : null,
+        geo,
         ua,
-        ref: refHost(body.r, request),
+        source: visitSource(body.r, body.q, request),
       });
     })().catch(() => undefined),
   );

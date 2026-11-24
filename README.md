@@ -218,7 +218,7 @@ functions/                       file-based routes (each file = an endpoint)
   api/me/index.ts                GET  → { user | null } · DELETE → delete account + favourites
   api/me/steam.ts                DELETE → unlink Steam (only when the user has a password)
   api/favorites.ts               GET list · POST {kind,id} | {items:[…]} · DELETE {kind,id} → { items }
-  api/nav.ts                     POST {p: path, r?: referrer} → 204 — one page view (SPA beacon, production only;
+  api/nav.ts                     POST {p: path, r?: referrer, q?: landing ?query} → 204 — one page view (SPA beacon, production only;
                                  bots / other origins / odd paths / /admin / ADMIN_USERS accounts dropped; sets no cookie)
   api/admin/stats.ts             GET ?days=7|30|90|0 → AdminStats, only for ADMIN_USERS (401 guest, 403 others);
                                  account rows carry `accountId`, the page shows Steam nickname + avatar + profile link
@@ -228,12 +228,13 @@ server/                          shared code (outside functions/ so it doesn't b
   http.ts       json()/fail(), readJson(), sameOrigin() (CSRF), cookies, safeNext(), base64url
   session.ts    signed cookie db_session=<userId>.<expires>.<HMAC-SHA256> (HttpOnly, 30 days) + hint cookie db_auth=1
   password.ts   PBKDF2-SHA256 "pbkdf2_sha256$<rounds>$<salt>$<hash>", constant-time verify, rehash on login when rounds grow
-  db.ts         SCHEMA (created on first "no such table"), users / favorites / auth_throttle queries
+  db.ts         SCHEMA (created on first "no such table"), COLUMNS (ALTER TABLE … ADD COLUMN for shipped tables,
+                run on the first "no such column", "duplicate column" = already there), users / favorites / auth_throttle queries
   steam-openid.ts  redirect URL + check_authentication verification
   auth.ts       currentUser(), isAdmin() (ADMIN_USERS: usernames and/or Steam ids), adminUserIds(), userPayload()
                 (public user + `admin: true`), validation rules, username from a Steam persona name
   stats.ts      owner stats: logEvent() (auth_events), markActive() (user_days), recordView() (page_views +
-                day_visitors + visits / visit_pages), normalizePath(), refHost(), parseUa(), visitorId() (daily salted
+                day_visitors + visits / visit_pages), normalizePath(), visitSource(), visitGeo(), parseUa(), visitorId() (daily salted
                 hash), adminStats() (the /admin report, owner's own rows left out)
 ```
 - **Proxy** (`/api/dl`): GET only, sections `assets|analytics|builds|players|matches|leaderboard|patches`. Cache key =
@@ -273,11 +274,23 @@ server/                          shared code (outside functions/ so it doesn't b
   `POST /api/nav` per route change (production builds) → `page_views` (day × path, player / match ids folded to
   `:id`) + `day_visitors` (SHA-256 of day + IP + UA + SESSION_SECRET, truncated — no cookie, unlinkable across
   days). **Visits** (`visits` + `visit_pages`, from 18.11): the same daily hash with < 30 min between pages = one
-  visit; a visit keeps device / browser / OS (rough UA parse, "Steam" = the in-game overlay), `request.cf.country`,
-  the external referrer host (the SPA sends `document.referrer` with the first view of a page load), the account
-  when logged in, and its pages in order (bare path + time). The report reads them for "Visits in detail": per-page
+  visit; a visit keeps device / browser / OS (rough UA parse, "Steam" = the in-game overlay), the rough place from
+  Cloudflare's IP geolocation (`visitGeo()`: `request.cf` country, `city`, `region`, `isp` = `asOrganization`; free on
+  every plan; city is often the provider's hub and a VPN shows the VPN — coordinates / postal codes are not kept, the IP
+  itself is never stored), where it came from (the SPA sends `document.referrer` and the landing `?query` with the first view of a page load;
+  `visitSource()`): `ref` = referrer host (an app id for Android app referrers), `ref_path` = the referrer's page path
+  when that site sends it (most send only the domain; referrer query strings are dropped — they can hold tokens),
+  `term` = search words when a search engine passes them (Google never does) or `utm_term`, `tag` = landing-link
+  tags `ref / utm_source / utm_medium / utm_campaign / utm_content / src / source / from` + `via=<platform>` for ad
+  click ids (fbclid, gclid…; the token itself is not kept). A visit without a source takes the first one a later
+  page load brings (direct, then a new tab from Google), a known one is never overwritten. The account when logged
+  in, and its pages in order (bare path + time). The report reads them for "Visits in detail": per-page
   views / visitors / visits / "max by one visitor" (inflation check), top visitors (6-char label of the hash,
-  username if logged in), sources, countries, devices, browsers, systems, latest 60 visits. **The owner is never
+  username if logged in), "Where they come from" (source key = referrer host, else `#<tags>`, else direct; the
+  SPA's `lib/sources.ts` names them and groups them into search / AI assistants / social & streams / partners /
+  other sites / tagged links / direct, each source with its top landing pages; plus top link tags, referrer pages
+  and search words), "Who visits" (countries, cities, providers, devices, browsers, systems), latest 60 visits (each
+  with city / provider, the site language and its source chips). **The owner is never
   counted**: `/api/nav` reads the session cookie and drops ADMIN_USERS accounts, `/admin` itself is never recorded,
   and a browser where an admin was logged in sets `localStorage deadbuff.nostats=1` (Layout → `skipThisBrowser()`)
   and stops sending beacons; `adminStats()` also filters admin user ids out of `user_days`, `auth_events` and
@@ -366,7 +379,9 @@ src/
     seo.ts                 useDocumentMeta(title, description) — runtime twin of the prerendered tags
     steam.ts               SteamID64 ⇄ account_id, parseAccountInput() (links, SteamID3, ids) — also used by server/
     admin.ts               AdminStats / VisitStats types (copy of server/stats.ts), useAdminStats(), sendPageView() →
-                           /api/nav (+ referrer once per page load), skipThisBrowser() (owner's browser), dayRange()
+                           /api/nav (+ referrer and landing ?query once per page load), skipThisBrowser() (owner's browser), dayRange()
+    sources.ts             /admin visit sources: sourceInfo(key) → kind (search / ai / social / partner / site / tag /
+                           direct) + brand name (Google, Google app, ChatGPT, Twitch…), tagName(), readablePath()
     me.ts                  useMe() = linked Steam account of the logged-in user, else "It's me" (localStorage,
                            setMe()/useLocalMe())
     match.ts               match page maths: purchases(), teamTotals(), laneResults() (who won each lane on souls at 10:00),
@@ -447,13 +462,14 @@ src/
                            Exports SteamButton, SteamGlyph
     Account.tsx            /account: details, Steam link/unlink, log out, delete account
     Admin.tsx              /admin (owner only): accounts by sign-up method, active users, sign-ins by kind, sign-ups
-                           and views by day (CSS bar charts), top pages, languages, newest accounts
+                           and views by day (CSS bar charts), top pages, languages, newest accounts; VisitsDetail with
+                           Whence (sources grouped, landing pages, tags) and VisitSource chips per visit
     Dashboard.tsx          /me: your WR per hero vs the average at your rank, strongest / weakest heroes, tiles,
                            favourites, recent matches. Exports PeriodSwitch (30 d / 90 d / all), heroVsRank(),
                            totals(), useRankName()
     Compare.tsx            /compare?a=&b=: two players side by side (CompareRow bars), games together,
                            heroes both play; friend picker = Steam search + the people you play with
-    Draft.tsx              /draft: Match / Lane switch, board ("You" first, teammates behind a toggle · vs · enemy 6
+    Draft.tsx              /draft: Match / Lane + "My team" switches, board ("You" first, teammates when on · vs · enemy 6
                            or lane 2) + hero pool (target switch, search + Enter), YourPick + DraftPlan + CoreItems,
                            Picks (top-3 Podium + list, sort win chance / counter effect, position filter), side panels
                            TeamNeeds / Answers / Avoid / HowItWorks; state in the URL (?me=&e=&a=&m=line&l=), old
@@ -502,7 +518,7 @@ src/
 | `/items/:slug` | Item page. `slug` = `itemSlug(englishName)` (`mystic-burst`) in every language — `useShopItemSlugs()` loads the English upgrade names outside EN. Unknown slug → `/items` |
 | `/matches` | Match lookup by ID + my recent matches |
 | `/matches/:matchId` | Match page (SPA only, not prerendered — rewritten to `/app` like players). `?tab=stats|lanes|timeline|analysis` opens a tab |
-| `/draft` | Draft helper. `me=` your hero, `e=` enemy slugs (≤6), `a=` teammate slugs (≤5, shown behind the "Teammates" toggle), `m=line` Lane mode with `l=` the two lane opponents. Old `?mode=team|build` links still parse (build without `me` = first ally) and are rewritten on the first edit. Prerendered (how it works + every hero's best counters as text). Main tab in the header since 24.11 |
+| `/draft` | Draft helper. `me=` your hero, `e=` enemy slugs (≤6), `a=` teammate slugs (≤5, used only while the "My team" switch is on; it turns on by itself when the link has teammates, switching it off keeps them, and "Copy link" with it off drops `a=`), `m=line` Lane mode with `l=` the two lane opponents. Old `?mode=team|build` links still parse (build without `me` = first ally) and are rewritten on the first edit. Prerendered (how it works + every hero's best counters as text). Main tab in the header since 24.11 |
 | `/counters` | Counter guides index (every hero → its counter page). Prerendered |
 | `/about` | About the site and the owner (streamer BethakZS, Twitch link), data source / partner. Linked from the footer ("Browse" column) and the site search ("about", "twitch", "bethakzs"). Prerendered with an `AboutPage` JSON-LD (author = BethakZS, `sameAs` Twitch) |
 | `/wiki` | Wiki: the map — interactive minimap with layers, lanes and districts, objectives, neutral camps, events, match timings, getting around. In the "three lines" menu (after Draft helper) and the site search ("wiki", "map", "urn", "midboss"…). Prerendered (all sections as text) |
@@ -517,7 +533,7 @@ src/
 | `/players` | Player search (Steam name, profile link, SteamID64, SteamID3 or account id) |
 | `/players/:accountId` | Player profile: rank, recent form, match history, heroes, teammates; "It's me" button |
 | `/me` | Personal dashboard of "me" (linked Steam account, else "It's me"); guests get a sign-in prompt (SPA only) |
-| `/admin` | Site stats for the owner (users in the `ADMIN_USERS` variable): sign-ups Steam vs password, sign-ins, active users, page views, then "Visits in detail" (visits, who opened which pages, top visitors, sources, countries, devices, latest visits). The owner's own activity is not counted. Shown in the account menu only to admins. SPA only (rewritten to `/app`) |
+| `/admin` | Site stats for the owner (users in the `ADMIN_USERS` variable): sign-ups Steam vs password, sign-ins, active users, page views, then "Visits in detail" (visits, who opened which pages, top visitors, where they come from — source groups with landing pages, link tags, referrer pages, search words — countries, cities, providers, devices, latest visits with city / provider and source chips). The owner's own activity is not counted. Shown in the account menu only to admins. SPA only (rewritten to `/app`) |
 | `*` | 404 |
 
 **Every route also exists under `/uk`, `/de`, `/es`, `/ru`** (`/uk/heroes/haze/builds`). The language prefix is the React Router
@@ -1010,7 +1026,7 @@ Rules:
 - `/draft` — **драфт-помічник** (вкладка «Драфт» у шапці; від 24.11 спершу предмети): «Ти» + 6 ворогів → «Що збирати
   проти них» — предмети з причинами (здібності ворогів і що зазвичай купують гравці на них, напр. «Струс · 35%» у Пейдж;
   для героїв у повітрі — окреме попередження про Струс) і перевіркою за матчами; «Чого чекати від ворогів» — картки
-  загроз (стани, лікування, урон духом / зброєю, ульти, які можна перебити) з відповідями; кнопка «Тімейти» — хто дає
+  загроз (стани, лікування, урон духом / зброєю, ульти, які можна перебити) з відповідями; перемикач «Своя команда» — хто дає
   тобі бар'єр / лікування проти ворожих ульт, хто вже бере відповідь («не треба дублювати»). Режим «Лінія»: ти + 2
   суперники → легка / рівна / важка лінія, ранні предмети (тір 1–2), звичний старт. Нижче, як і раніше: твій матчап,
   основні предмети, інші піки (топ-3 «подіум»), «відповідь на кожного ворога», «краще не брати». Посилання з драфтом
@@ -1022,7 +1038,10 @@ Rules:
 - `/admin` — **статистика сайту для власника** (лише для логінів зі змінної `ADMIN_USERS`): скільки користувачів,
   скільки зареєструвались через Steam і скільки з паролем, входи (Steam / пароль), активні, реєстрації й перегляди
   по днях, топ сторінок, мови, нові акаунти; нижче — **«Візити детально»**: сесії, хто які сторінки відкривав (і чи
-  не одна людина накручує), найактивніші відвідувачі, джерела, країни, пристрої, останні візити з ланцюжком сторінок.
+  не одна людина накручує), найактивніші відвідувачі, **«Звідки приходять»** (пошук / ШІ-асистенти / соцмережі й
+  стріми / партнери / інші сайти / посилання з міткою / прямий захід, у кожного джерела — на які сторінки заходять;
+  мітки посилань `?ref=…`, сторінки, з яких перейшли, пошукові слова), «Хто заходить» (країни, міста, провайдери,
+  пристрої, браузери, системи), останні візити з містом, провайдером, мовою сайту, ланцюжком сторінок і плашками джерела.
   Власні перегляди власника не рахуються. У меню акаунта з'являється пункт «Статистика сайту»
 - **Обране**: зірочка на сторінці героя і на кожному білді; у гостя зберігається в браузері, після входу
   переноситься в акаунт
@@ -1079,6 +1098,9 @@ Rules:
 | Ребілд кожні 6 годин | ⚠️ 23.11: фактично не працює. GitHub Actions за добу запустив лише один ребілд (07:36 UTC, крон `06:17`), а `00:17`, `12:17` і `18:17` пропустив — знімки на живому сайті о 21:06 UTC були 13,5 год давнини замість ≤6. Безкоштовні крони GitHub не гарантовані: запізнюються (цей — на 78 хв) і пропускаються під навантаженням. Варіанти: частіші крони (кожні 2–3 год → 240–360 збірок на місяць із 500 на Free) або Cloudflare Cron Trigger у Worker, що сам б'є по deploy hook (точний час, виклики крона не з денного ліміту). **Власнику:** вирішити, чи робити |
 | Twitch-набір | ✅ 17.11: `twitch-kit/` — 10 панелей, банер профілю, офлайн-банер, плашка для OBS у стилі сайту + інструкція (`twitch-kit/README.md`). Генерується з `twitch-kit/src/kit.html` через headless Chrome, у збірку сайту не входить. Власник поставив лише панель Deadbuff і попросив решту «у своєму стилі, не Deadlock» → 17.11: `twitch-kit/panels-bethak/` — 8 панелей у стилі його банера (нічна кімната, фіолетовий неон, крейда з короною, шматки банера), з `twitch-kit/src/bethak.html`. Ще не закомічено — **власнику:** вирішити, чи тримати в репозиторії |
 | Драфт і адмінка 24.11 | ✅ Запушено 24.11 (`92352cc`): драфт «спершу предмети» + «Лінія» + тімейти, «Драфт» у шапці, ніки Steam в адмінці (розділ 6, п. 34). Збірка — 2190 сторінок. На живому сайті перевірено: «Драфт» п'ятою вкладкою в шапці, Віндікта проти Пейдж/Сон/Швейцар/Севен/Абрамс/Гейз — предмети з причинами, «Струс · 35%» і попередження про повітря. Ніки Steam у нових реєстраціях — перевірити на першій новій реєстрації |
+| Перемикач «Своя команда» 24.11 | ⏳ Зроблено локально, **не запушено** (розділ 6, п. 35). Збірка — 2190 сторінок |
+| Джерела візитів 24.11 | ⏳ Зроблено локально, **не запушено**: блок «Звідки приходять», плашки джерела, мітки `?ref=…` (розділ 6, п. 36). Збірка — 2190 сторінок |
+| Місто й провайдер 25.11 | ⏳ Зроблено локально, **не запушено**: місто, область, провайдер у візитах, списки «Міста» / «Провайдери» (розділ 6, п. 37) |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
 підробленої cookie, унікальність логіна без урахування регістру (і для кирилиці), проксі (повторний запит 0,8 с → 0,008 с),
@@ -1432,6 +1454,44 @@ deadbuff.net (Twitch-панель, Reddit, Discord, опис репозитор�
     дає бар'єр союзнику, тримайся поруч проти Гість готелю (Швейцар)…», «часто бере Священний бар'єр (41%)»; лінія
     Віндікта проти Імли й Абрамса — «Легка лінія», ранні предмети, звичний старт. Адмінка — на локальній базі з
     тестовим акаунтом. **Власнику:** погратися з драфтом на живому сайті після пушу і сказати, які пояснення не так
+35. **24.11 — перемикач «Своя команда» в драфті.** Запит: «optional чекбокс вмикати / вимикати — + своя команда чи
+    без неї». Зроблено: поруч із «Матч / Лінія» перемикач «Своя команда» (лише в режимі «Матч»; замінив велику кнопку
+    «+ Тімейти» і посилання «Сховати тімейтів»). За замовчуванням вимкнено (ти + 6 ворогів), вмикається сам, якщо в
+    посиланні є тімейти. Вимкнення не стирає вибраних тімейтів — можна порівнювати «з командою / без» без повторного
+    вибору; «Скопіювати посилання» з вимкненим перемикачем дає посилання без тімейтів. Підказка поруч показує склад
+    («Ти + 5 тімейтів + 6 ворогів»). Перевірено локально (UA / DE / EN, 800 px і 375 px без горизонтального скролу)
+36. **24.11 — більше про джерела візитів в адмінці.** Запит (на рядку візиту «з google.com»): «більше інфи, звідки
+    зайшли». Обмеження: **Google не передає пошуковий запит** (лише що прийшли з google.com), а більшість сайтів
+    передають лише домен, без сторінки — тож «що саме шукали» для окремого візиту дізнатися неможливо; загальні
+    запити є лише в Search Console → «Ефективність» (без прив'язки до людей). Зроблено: (1) візит тепер зберігає
+    ще сторінку-джерело (коли сайт її передає), пошукові слова (Bing / інші, якщо передають; `utm_term`) і **мітки
+    посилання** (`?ref=…`, `utm_source=…` — напр. ChatGPT сам додає `utm_source=chatgpt.com`; для реклами — лише
+    платформа, `via=facebook`). (2) Блок **«Звідки приходять»**: групи «Пошук» (Google, застосунок Google, Bing…),
+    «ШІ-асистенти» (ChatGPT, Perplexity, Gemini…), «Соцмережі й стріми» (Twitch, YouTube, Reddit, Discord…),
+    «Партнери» (Deadlock API), «Інші сайти», «Посилання з міткою», «Прямий захід» — з кількістю, часткою і для
+    кожного джерела «заходять на» (перші сторінки); нижче — «Мітки посилань», «Сторінки, з яких перейшли»,
+    «Пошукові слова». Старий список «Джерела» прибрано, решта — у новому блоці «Хто заходить». (3) У кожному
+    візиті — плашки «з Google» / «Прямий захід» (підказка: закладка, набрали адресу або Discord / Telegram, які
+    джерело не передають), посилання на сторінку-джерело, мітка, запит. (4) Візит без джерела бере перше, що прийде
+    пізніше (зайшов напряму, а за 10 хв — з Google у новій вкладці), відоме джерело не перезаписується. Нові
+    колонки `visits.ref_path / term / tag` додаються в D1 самі при першому запиті (`server/db.ts` → COLUMNS).
+    Перевірено локально (wrangler + D1, тестові візити з Google, застосунку Google, ChatGPT, Reddit, Bing із
+    запитом, `?ref=twitch`, fbclid; справжній перехід браузера з `?ref=…`; UA / DE / EN, 800 px і 375 px без
+    горизонтального скролу). Старі візити мають лише домен. **Власнику:** у своїх посиланнях (Twitch-панелі,
+    Discord, Reddit, опис YouTube) додавати мітку — `https://deadbuff.net/?ref=twitch` (або `?ref=discord`, …),
+    тоді в адмінці буде видно, яке саме посилання привело людей
+37. **25.11 — місто й провайдер у візитах.** Запит: «визначаєш, що з RU чи з України — можеш з міста і більше інфи,
+    з якого району, +- по айпі». Зроблено: візит зберігає ще **місто, область і провайдера** (мобільний оператор /
+    домашній інтернет / VPN-компанія) з геолокації Cloudflare (`request.cf`, безкоштовно, без сторонніх сервісів).
+    В адмінці: у кожному візиті, напр., «Україна · Kyiv · Kyivstar · комп'ютер · Chrome · Windows · мова сайту UA»
+    (область — у дужках, якщо відрізняється від міста), у «Хто заходить» — списки «Міста» і «Провайдери», у
+    найактивніших відвідувачів — місто. «RU» / «UA» наприкінці рядка — це **мова сайту**, яку відкрила людина, а не
+    країна (тепер підписано «мова сайту RU»). **Район не визначити**: IP-геолокація дає в кращому разі місто, часто
+    це місто провайдера (мобільний інтернет може показувати Київ для всієї області), з VPN — місце VPN. Координати й
+    поштові індекси навмисно не зберігаються — вони лише вдавали б точність; сама IP-адреса, як і раніше, не
+    зберігається. Назви міст — англійською, як їх дає Cloudflare. Колонки `visits.city / region / isp` додаються в
+    D1 самі. Перевірено локально (wrangler + D1, UA / DE, 800 px і 375 px без горизонтального скролу). Старі візити
+    — лише країна
 29. **18.11 — статистика без власника + візити детально.** Запит: «щоб моя статистика не показувалась (з мого
     акаунта)» і «трекати, хто на які сторінки заходить — з однією сесією чи з різними, щоб бачити, що перегляди не
     накручують»; старий розділ «Відвідування» лишити, детальніше — нижче. Зроблено: `/api/nav` не рахує акаунти з
@@ -1759,3 +1819,9 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   у h1 і JSON-LD головної (розділ 6, п. 33); оновлено розділи 5, 6 і Частину I (SEO prerender), `.gitignore`
 - **24.11.2026 (друга частина)** — ніки Steam в адмінці, «Драфт» у шапці, драфт-помічник «спершу предмети» з режимом
   «Лінія» і тімейтами (розділ 6, п. 34); оновлено розділи 1, 2, 6 і Частину I (§1, §3, §4 файли, маршрути, правила драфту, шапка)
+- **24.11.2026 (третя частина)** — перемикач «Своя команда» в драфті замість кнопки «+ Тімейти» (розділ 6, п. 35);
+  оновлено розділи 1, 2, 6 і Частину I (§4 файли, маршрути)
+- **24.11.2026 (четверта частина)** — джерела візитів в адмінці: групи, сторінки входу, мітки `?ref=…`, сторінка-джерело,
+  пошукові слова; міграція колонок D1 (розділ 6, п. 36); оновлено розділи 1, 2, 6 і Частину I (§3 бекенд, §4 файли, маршрути)
+- **25.11.2026** — місто, область і провайдер у візитах з геолокації Cloudflare, підпис «мова сайту» (розділ 6, п. 37);
+  оновлено розділи 1, 2, 6 і Частину I (§3 бекенд, §4 файли, маршрути)

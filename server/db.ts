@@ -2,8 +2,8 @@
  * D1 (SQLite) access. The schema below is the single source of truth:
  * tables are created automatically the first time a query hits a missing
  * table, so a fresh D1 database needs no manual migration — just bind it
- * as `DB`. Add columns with a new `ALTER TABLE` entry at the end of SCHEMA
- * (each statement must be safe to run again).
+ * as `DB`. Add columns to a shipped table with an `ALTER TABLE … ADD COLUMN`
+ * entry in COLUMNS: it runs the first time a query hits the missing column.
  * ------------------------------------------------------------------ */
 import { nowSec } from './http';
 
@@ -62,6 +62,7 @@ const SCHEMA = [
    )`,
   // one row per visit (session): the same daily visitor hash with less than 30 minutes between pages.
   // user_id = logged-in account, country = Cloudflare geo, ref = host of the external referrer
+  // (+ ref_path, term, tag, city, region, isp — added later, see COLUMNS)
   `CREATE TABLE IF NOT EXISTS visits (
      id         INTEGER PRIMARY KEY AUTOINCREMENT,
      day        TEXT NOT NULL,
@@ -89,13 +90,47 @@ const SCHEMA = [
    ) WITHOUT ROWID`,
 ];
 
-/** Runs `fn`; if a table is missing (fresh database) creates the schema and runs it once more. */
+/**
+ * Columns added after a table was first shipped. SQLite can't "ADD COLUMN IF NOT EXISTS", so each one runs on
+ * its own and "duplicate column" means it is already there.
+ */
+const COLUMNS = [
+  // visits (24.11): the referrer's page path, search words (when passed) and the landing link's tags — see visitSource
+  'ALTER TABLE visits ADD COLUMN ref_path TEXT',
+  'ALTER TABLE visits ADD COLUMN term TEXT',
+  'ALTER TABLE visits ADD COLUMN tag TEXT',
+  // visits (25.11): rough place from the IP — city, region, network owner (Cloudflare geolocation, see visitGeo)
+  'ALTER TABLE visits ADD COLUMN city TEXT',
+  'ALTER TABLE visits ADD COLUMN region TEXT',
+  'ALTER TABLE visits ADD COLUMN isp TEXT',
+];
+
+async function addColumns(db: D1Database) {
+  for (const s of COLUMNS) {
+    await db
+      .prepare(s)
+      .run()
+      .catch((e: unknown) => {
+        if (!/duplicate column/i.test(String(e))) throw e;
+      });
+  }
+}
+
+/**
+ * Runs `fn`; if a table is missing (fresh database) creates the schema, if a column is missing (a database
+ * from before it was added) adds the columns — then runs it once more.
+ */
 export async function q<T>(db: D1Database, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    if (!/no such table/i.test(String(e))) throw e;
-    await db.batch(SCHEMA.map((s) => db.prepare(s)));
+    const msg = String(e);
+    if (/no such table/i.test(msg)) {
+      await db.batch(SCHEMA.map((s) => db.prepare(s)));
+      await addColumns(db);
+    } else if (/no such column|has no column named/i.test(msg)) {
+      await addColumns(db);
+    } else throw e;
     return fn();
   }
 }

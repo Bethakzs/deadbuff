@@ -647,8 +647,21 @@ export function DraftPage() {
     if (me) setTarget('enemy');
   };
 
+  // the switch keeps the picked teammates, so "with team / without" can be compared without re-picking
+  const toggleMates = (on: boolean) => {
+    setShowMates(on);
+    if (on) setTarget(me ? 'ally' : 'me');
+    else if (target === 'ally') setTarget('enemy');
+  };
+
   const copyLink = () => {
-    void navigator.clipboard?.writeText(window.location.href).then(() => {
+    // with the team switched off the link shares what is on screen: no teammates
+    const url = new URL(window.location.href);
+    if (!showMates) {
+      url.searchParams.delete('a');
+      url.search = url.searchParams.toString().replace(/%2C/gi, ','); // keep the readable "a,b,c" lists
+    }
+    void navigator.clipboard?.writeText(url.toString()).then(() => {
       setCopied(true);
       window.clearTimeout(copyTimer.current);
       copyTimer.current = window.setTimeout(() => setCopied(false), 2000);
@@ -688,7 +701,14 @@ export function DraftPage() {
                   { value: 'line', label: t('draft.mode.line') },
                 ]}
               />
-              <span className="muted small">{t(isLane ? 'draft.mode.lineHint' : 'draft.mode.matchHint')}</span>
+              {!isLane && (
+                <label className="draft-switch" title={t('draft.mates.why')}>
+                  <input type="checkbox" checked={showMates} onChange={(e) => toggleMates(e.target.checked)} />
+                  <span className="draft-switch__track" aria-hidden />
+                  {t('draft.mates.toggle')}
+                </label>
+              )}
+              <span className="muted small">{t(isLane ? 'draft.mode.lineHint' : showMates ? 'draft.mode.teamHint' : 'draft.mode.matchHint')}</span>
             </div>
             <TeamRow
               side="ally"
@@ -698,34 +718,20 @@ export function DraftPage() {
               onActivate={() => setTarget(me && showMates && !isLane ? 'ally' : 'me')}
             >
               <Slot key={me ? me.id : 'me'} hero={me} you next={target === 'me'} onSelect={() => setTarget('me')} onRemove={() => update(() => ({ me: null }))} />
-              {!isLane && showMates
-                ? Array.from({ length: MATES }, (_, i) => {
-                    const h = mates[i];
-                    return (
-                      <Slot
-                        key={h ? h.id : `a${i}`}
-                        hero={h}
-                        next={!h && target === 'ally' && i === mates.length}
-                        onSelect={() => setTarget('ally')}
-                        onRemove={() => h && update((d) => ({ a: d.mates.filter((x) => x.id !== h.id) }))}
-                      />
-                    );
-                  })
-                : !isLane && (
-                    <li className="draft-slots__wide">
-                      <button
-                        className="draft-mates-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowMates(true);
-                          setTarget('ally');
-                        }}
-                      >
-                        <span className="draft-slot__plus">+</span> {t('draft.mates.show')}
-                        <small className="muted">{t('draft.mates.why')}</small>
-                      </button>
-                    </li>
-                  )}
+              {!isLane &&
+                showMates &&
+                Array.from({ length: MATES }, (_, i) => {
+                  const h = mates[i];
+                  return (
+                    <Slot
+                      key={h ? h.id : `a${i}`}
+                      hero={h}
+                      next={!h && target === 'ally' && i === mates.length}
+                      onSelect={() => setTarget('ally')}
+                      onRemove={() => h && update((d) => ({ a: d.mates.filter((x) => x.id !== h.id) }))}
+                    />
+                  );
+                })}
             </TeamRow>
             <div className="draft-vs" aria-hidden>
               <span className="display">vs</span>
@@ -752,14 +758,6 @@ export function DraftPage() {
               })}
             </TeamRow>
             <div className="draft-board__actions">
-              {!isLane && showMates && (
-                <button className="link-more" onClick={() => {
-                    setShowMates(false);
-                    if (target === 'ally') setTarget('enemy');
-                  }}>
-                  {t('draft.mates.hide')}
-                </button>
-              )}
               <button className="link-more" onClick={copyLink} disabled={!hasInput && !me}>
                 {copied ? t('draft.copied') : t('draft.copyLink')}
               </button>

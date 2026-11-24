@@ -61,13 +61,24 @@ export interface VisitStats {
     sessions: number;
     pages: number;
     country: string | null;
+    city: string | null;
     device: string;
     browser: string;
     os: string;
     lastAt: number;
   }[];
+  /** key = referrer host, "#<tags>" = tagged link without a referrer, "" = direct — see lib/sources.ts */
   sources: Count[];
+  /** first page of the visits per source key */
+  landings: { key: string; path: string; n: number }[];
+  tags: Count[];
+  /** "reddit.com/r/…" */
+  refPages: Count[];
+  terms: Count[];
   countries: Count[];
+  /** key = "UA|Kyiv" */
+  cities: Count[];
+  isps: Count[];
   devices: Count[];
   browsers: Count[];
   systems: Count[];
@@ -81,10 +92,20 @@ export interface VisitStats {
     views: number;
     lang: string;
     country: string | null;
+    /** rough place from the IP (Cloudflare): city, region, network owner */
+    city: string | null;
+    region: string | null;
+    isp: string | null;
     device: string;
     browser: string;
     os: string;
     ref: string | null;
+    /** the referrer's page path, when that site sends it */
+    refPath: string | null;
+    /** search words, when passed (Google never does) */
+    term: string | null;
+    /** landing-link tags: "ref=twitch · utm_medium=panel" */
+    tag: string | null;
     pages: { path: string; t: number }[];
   }[];
 }
@@ -124,6 +145,8 @@ const skipped = () => {
 
 /** The external referrer goes with the first view of a page load only (later views are clicks inside the site). */
 let referrerSent = false;
+/** The landing link's `?query` (`?ref=twitch`, `utm_source=…`), read before the router rewrites the address. */
+const landingQuery = typeof location === 'undefined' ? '' : location.search.slice(0, 400);
 
 /**
  * One page view for the owner's stats. Production builds only (dev has no Functions); a plain-text Blob
@@ -133,8 +156,9 @@ export function sendPageView(path: string) {
   if (!import.meta.env.PROD || typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function' || skipped()) return;
   try {
     const r = referrerSent ? undefined : document.referrer || undefined;
+    const q = referrerSent ? undefined : landingQuery || undefined;
     referrerSent = true;
-    navigator.sendBeacon('/api/nav', new Blob([JSON.stringify({ p: path, r })], { type: 'text/plain' }));
+    navigator.sendBeacon('/api/nav', new Blob([JSON.stringify({ p: path, r, q })], { type: 'text/plain' }));
   } catch {
     /* ignore */
   }

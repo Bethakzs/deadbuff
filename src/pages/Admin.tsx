@@ -8,6 +8,7 @@ import { ADMIN_PERIODS, dayRange, useAdminStats, type AdminPeriod, type AdminSta
 import { AuthFailure, useAuth } from '../lib/auth';
 import { fmtDate, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { useDocumentMeta } from '../lib/seo';
+import { readablePath, SOURCE_KINDS, sourceInfo, type SourceKind } from '../lib/sources';
 import { accountIdToSteam64 } from '../lib/steam';
 import type { SteamProfile } from '../lib/types';
 
@@ -156,6 +157,137 @@ function CountList({ title, rows, total, name }: { title: string; rows: Count[];
   );
 }
 
+type VisitRow = VisitStats['recent'][number];
+
+/** Where one visit came from: the source, the referrer page when the site sent it, link tags, search words. */
+function VisitSource({ r }: { r: VisitRow }) {
+  const { t } = useT();
+  const s = sourceInfo(r.ref ?? (r.tag ? `#${r.tag}` : ''));
+  return (
+    <>
+      {s.kind === 'direct' ? (
+        <span className="chip admin-src is-direct" title={t('admin.v.directHint')}>
+          {t('admin.v.kind.direct')}
+        </span>
+      ) : (
+        s.kind !== 'tag' && (
+          <span className={`chip admin-src is-${s.kind}`} title={`${t(`admin.v.kind.${s.kind}` as MsgKey)} · ${r.ref ?? r.tag}`}>
+            {t('admin.v.from', { x: s.name })}
+          </span>
+        )
+      )}
+      {r.ref && r.refPath && (
+        <a className="chip admin-src admin-src__link" href={`https://${r.ref}${r.refPath}`} target="_blank" rel="noreferrer noopener">
+          {readablePath(r.ref + r.refPath)} ↗
+        </a>
+      )}
+      {r.tag && <span className="chip admin-src is-tag">{t('admin.v.tag', { x: r.tag })}</span>}
+      {r.term && <span className="chip admin-src is-search">{t('admin.v.term', { x: r.term })}</span>}
+    </>
+  );
+}
+
+/** Top first pages of a source: "→ /uk 5 · /heroes/haze 2". */
+function Landings({ pages }: { pages: Map<string, number> }) {
+  const { t } = useT();
+  const top = [...pages].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  if (!top.length) return null;
+  return (
+    <span className="admin-whence__pages muted small">
+      {t('admin.v.landing')}{' '}
+      {top.map(([path, n], i) => (
+        <span key={path}>
+          {i > 0 && ' · '}
+          <Link to={linkTo(path)}>{path}</Link> <span className="num">{fmtInt(n)}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+interface SourceItem {
+  name: string;
+  n: number;
+  pages: Map<string, number>;
+}
+
+/** Sources grouped (search, AI, social…) with each source's landing pages, plus link tags, referrer pages and words. */
+function Whence({ v }: { v: VisitStats }) {
+  const { t } = useT();
+  const groups = useMemo(() => {
+    const byKind = new Map<SourceKind, { kind: SourceKind; n: number; items: SourceItem[] }>();
+    const find = (key: string, create: boolean) => {
+      const s = sourceInfo(key);
+      let g = byKind.get(s.kind);
+      if (!g && create) byKind.set(s.kind, (g = { kind: s.kind, n: 0, items: [] }));
+      let it = g?.items.find((x) => x.name === s.name);
+      if (g && !it && create) g.items.push((it = { name: s.name, n: 0, pages: new Map() }));
+      return [g, it] as const;
+    };
+    for (const r of v.sources) {
+      const [g, it] = find(r.key, true);
+      g!.n += r.n;
+      it!.n += r.n;
+    }
+    for (const l of v.landings) {
+      const [, it] = find(l.key, false);
+      if (it) it.pages.set(l.path, (it.pages.get(l.path) ?? 0) + l.n);
+    }
+    return SOURCE_KINDS.flatMap((k) => {
+      const g = byKind.get(k);
+      return g ? [{ ...g, items: g.items.sort((a, b) => b.n - a.n) }] : [];
+    });
+  }, [v.sources, v.landings]);
+  const total = Math.max(1, v.sessions);
+  const extras = [
+    { key: 'tags', title: t('admin.v.tags'), rows: v.tags, name: (k: string) => k },
+    { key: 'refPages', title: t('admin.v.refPages'), rows: v.refPages, name: readablePath },
+    { key: 'terms', title: t('admin.v.terms'), rows: v.terms, name: (k: string) => k },
+  ].filter((x) => x.rows.length);
+
+  return (
+    <Panel title={t('admin.v.audience')} className="admin-audience">
+      {!groups.length ? (
+        <Empty>{t('admin.noData')}</Empty>
+      ) : (
+        <ul className="admin-whence">
+          {groups.map((g) => (
+            <li key={g.kind} className={`admin-whence__group is-${g.kind}`}>
+              <div className="admin-whence__head" title={g.kind === 'direct' ? t('admin.v.directHint') : undefined}>
+                <span className="admin-counts__bar" style={{ width: `${(g.n / total) * 100}%` }} />
+                <b>{t(`admin.v.kind.${g.kind}` as MsgKey)}</b>
+                <span className="num">
+                  {fmtInt(g.n)} · {fmtPct(g.n / total, 0)}
+                </span>
+              </div>
+              <ul className="admin-whence__items">
+                {g.items.map((it) => (
+                  <li key={it.name || 'direct'}>
+                    {g.kind !== 'direct' && (
+                      <span className="admin-whence__name">
+                        {it.name} <b className="num">{fmtInt(it.n)}</b>
+                      </span>
+                    )}
+                    <Landings pages={it.pages} />
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+      {extras.length > 0 && (
+        <div className="admin-counts-grid admin-whence__extras">
+          {extras.map((x) => (
+            <CountList key={x.key} title={x.title} rows={x.rows} total={total} name={x.name} />
+          ))}
+        </div>
+      )}
+      <p className="muted small admin-note">{t('admin.v.whenceNote')}</p>
+    </Panel>
+  );
+}
+
 const VISITS_STEP = 15;
 
 /** Visits in detail: who opened what, in one visit or several — shows when a few people inflate the views. */
@@ -166,8 +298,15 @@ function VisitsDetail({ v }: { v: VisitStats }) {
   const multi = v.sessions - v.bounces;
   const device = (d: string) => (['desktop', 'mobile', 'tablet'].includes(d) ? t(`admin.v.device.${d}` as MsgKey) : d);
   const other = (k: string) => (k === 'Other' || !k ? t('admin.v.other') : k);
-  const langLabel = (id: string) => LANGS.find((l) => l.id === id)?.label ?? id.toUpperCase();
+  const langLabel = (id: string) => t('admin.v.siteLang', { x: LANGS.find((l) => l.id === id)?.label ?? id.toUpperCase() });
   const fmtWhen = (unix: number) => new Date(unix * 1000).toLocaleString(meta.locale, { dateStyle: 'medium', timeStyle: 'short' });
+  // "Brovary (Kyiv Oblast)"; the region is left out when it only repeats the city ("Kyiv" / "Kyiv City")
+  const place = (city: string | null, area?: string | null) =>
+    city && (area && !area.includes(city) && !city.includes(area) ? `${city} (${area})` : city);
+  const cityName = (key: string) => {
+    const [code, city] = key.split('|');
+    return [city, region(code)].filter(Boolean).join(', ');
+  };
 
   return (
     <>
@@ -245,7 +384,7 @@ function VisitsDetail({ v }: { v: VisitStats }) {
                       <div>
                         <VisitorTag id={p.id} username={p.username} accountId={p.accountId} />
                         <span className="muted small admin-people__meta">
-                          {[region(p.country), device(p.device), other(p.browser), other(p.os)].filter(Boolean).join(' · ')}
+                          {[region(p.country), place(p.city), device(p.device), other(p.browser), other(p.os)].filter(Boolean).join(' · ')}
                         </span>
                       </div>
                       <div className="admin-people__nums">
@@ -262,14 +401,18 @@ function VisitsDetail({ v }: { v: VisitStats }) {
             </Panel>
           </div>
 
-          <Panel title={t('admin.v.audience')} className="admin-audience">
+          <Whence v={v} />
+
+          <Panel title={t('admin.v.who')} className="admin-audience">
             <div className="admin-counts-grid">
-              <CountList title={t('admin.v.sources')} rows={v.sources} total={v.sessions} name={(k) => k || t('admin.v.direct')} />
               <CountList title={t('admin.v.countries')} rows={v.countries} total={v.sessions} name={(k) => region(k) ?? t('admin.v.unknown')} />
+              {v.cities.length > 0 && <CountList title={t('admin.v.cities')} rows={v.cities} total={v.sessions} name={cityName} />}
+              {v.isps.length > 0 && <CountList title={t('admin.v.isps')} rows={v.isps} total={v.sessions} name={(k) => k} />}
               <CountList title={t('admin.v.devices')} rows={v.devices} total={v.sessions} name={device} />
               <CountList title={t('admin.v.browsers')} rows={v.browsers} total={v.sessions} name={other} />
               <CountList title={t('admin.v.systems')} rows={v.systems} total={v.sessions} name={other} />
             </div>
+            <p className="muted small admin-note">{t('admin.v.geoNote')}</p>
           </Panel>
 
           <Panel title={t('admin.v.recent')} className="admin-audience">
@@ -283,9 +426,11 @@ function VisitsDetail({ v }: { v: VisitStats }) {
                       <div className="admin-visits__head">
                         <VisitorTag id={r.visitor} username={r.username} accountId={r.accountId} />
                         <span className="muted small">
-                          {[region(r.country), device(r.device), other(r.browser), other(r.os), langLabel(r.lang)].filter(Boolean).join(' · ')}
+                          {[region(r.country), place(r.city, r.region), r.isp, device(r.device), other(r.browser), other(r.os), langLabel(r.lang)]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </span>
-                        {r.ref && <span className="chip admin-visits__ref">{t('admin.v.from', { x: r.ref })}</span>}
+                        <VisitSource r={r} />
                         <span className="admin-visits__when muted small num" title={fmtWhen(r.startedAt)}>
                           {ago(r.startedAt)} · {t('admin.v.viewsN', { n: r.views })}
                           {r.views > 1 && ` · ${fmtTime(r.lastAt - r.startedAt)}`}

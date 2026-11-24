@@ -1212,9 +1212,11 @@ button.player-result {
 }
 .admin-visits {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 .admin-visits > li {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 12px 0;
   border-bottom: 1px solid var(--line);
@@ -1228,8 +1230,121 @@ button.player-result {
   align-items: baseline;
   gap: 6px 12px;
 }
-.admin-visits__ref {
+/* where a visit came from: a dot in the source kind's colour */
+.admin-src {
+  --k: var(--text-2);
+  display: inline-block;
+  max-width: 100%;
   font-size: 11px;
+  line-height: 26px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-src::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--k);
+}
+a.admin-src:hover {
+  color: var(--brass-hi);
+}
+:is(.admin-src, .admin-whence__group).is-search {
+  --k: var(--brass);
+}
+:is(.admin-src, .admin-whence__group).is-ai {
+  --k: var(--spirit);
+}
+:is(.admin-src, .admin-whence__group).is-social {
+  --k: var(--tier-b);
+}
+:is(.admin-src, .admin-whence__group).is-partner {
+  --k: var(--vitality);
+}
+:is(.admin-src, .admin-whence__group).is-site {
+  --k: var(--text-2);
+}
+:is(.admin-src, .admin-whence__group).is-tag {
+  --k: var(--weapon);
+}
+:is(.admin-src, .admin-whence__group).is-direct {
+  --k: var(--faint);
+}
+.admin-whence {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 14px 22px;
+}
+.admin-whence__group {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+.admin-whence__head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.admin-whence__head b {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+}
+.admin-whence__head b::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--k);
+}
+.admin-whence__head .admin-counts__bar {
+  background: color-mix(in srgb, var(--k) 16%, transparent);
+}
+.admin-whence__items {
+  display: grid;
+  gap: 6px;
+  padding-left: 23px;
+}
+.admin-whence__items > li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+.admin-whence__name {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.admin-whence__name b {
+  color: var(--brass-hi);
+}
+.admin-whence__pages {
+  overflow-wrap: anywhere;
+}
+.admin-whence__pages a {
+  color: var(--text-2);
+}
+.admin-whence__pages a:hover {
+  color: var(--brass-hi);
+}
+.admin-whence__extras {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 .admin-visits__when {
   margin-left: auto;
