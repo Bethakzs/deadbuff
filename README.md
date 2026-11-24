@@ -112,8 +112,9 @@ Main goals (in priority order):
 3. **Hero pages** — what every ability does (description, cooldowns, T1/T2/T3 upgrades), popular skill order, core items, matchups, base stats, lore.
 4. Item stats (shop view + table + a page per item), a global build browser, match pages, patch impact
    and the ranked leaderboard.
-5. Player tools: **draft helper** (one board: enemies, you, teammates → best pick for your slot, answers to each
-   enemy, what to avoid, then your matchup + items vs the lineup), **counter pages** per hero (`/counters/:slug`),
+5. Player tools: **draft helper** (you + the enemies → what to build against them, against whom and why — from their
+   kits and the items their players usually buy, checked against match data; teammates who cover you; a Lane mode
+   with your two lane opponents; plus the best pick for your slot), **counter pages** per hero (`/counters/:slug`),
    **accounts** (Steam OpenID or username + e-mail + password, no e-mail confirmation) with **favourite
    heroes and builds**, a **personal dashboard** (your WR per hero vs the average at your rank), **compare with
    a friend** and **match analysis** (your item timings vs top players on the same hero).
@@ -219,7 +220,8 @@ functions/                       file-based routes (each file = an endpoint)
   api/favorites.ts               GET list · POST {kind,id} | {items:[…]} · DELETE {kind,id} → { items }
   api/nav.ts                     POST {p: path, r?: referrer} → 204 — one page view (SPA beacon, production only;
                                  bots / other origins / odd paths / /admin / ADMIN_USERS accounts dropped; sets no cookie)
-  api/admin/stats.ts             GET ?days=7|30|90|0 → AdminStats, only for ADMIN_USERS (401 guest, 403 others)
+  api/admin/stats.ts             GET ?days=7|30|90|0 → AdminStats, only for ADMIN_USERS (401 guest, 403 others);
+                                 account rows carry `accountId`, the page shows Steam nickname + avatar + profile link
   api/[[rest]].ts                any other /api/* → JSON 404
 server/                          shared code (outside functions/ so it doesn't become routes)
   env.ts        Env bindings (DB, SESSION_SECRET, PBKDF2_ITERATIONS, DEADLOCK_API_KEY), accountEnv()
@@ -346,6 +348,10 @@ src/
                            heroes' own strength), answersTo() (best answers to one enemy), countersOf() (counter page:
                            counters + victims of one hero, MIN_PAIR_GAMES = 300), teamRoles() (missing position),
                            itemsVsLineup()
+    threats.ts             draft items (24.11): heroKit()/abilityTags() (stun/root/silence/sleep/lift/heal/channel
+                           ult from ability properties; ally barrier/heal and airborne from class-name lists),
+                           buildPlan() (threats → answer items → ranked plan + team notes), itemRates() (item-stats
+                           bucket=hero → share of a hero's games with an item), topSources()
     types.ts               API response types (only fields we use) + client fields Hero.slug / Hero.name_en
     filters.tsx            FilterProvider/useFilters: rank bracket + period, persisted in localStorage
     heroes.ts              slug, role keys, hero colours/images, abilities lookup, buildHeroRows(), assignTiers()
@@ -447,10 +453,13 @@ src/
                            totals(), useRankName()
     Compare.tsx            /compare?a=&b=: two players side by side (CompareRow bars), games together,
                            heroes both play; friend picker = Steam search + the people you play with
-    Draft.tsx              /draft: board (enemy 6 · "You" · 5 teammates) + hero pool (target switch, search + Enter),
-                           YourPick + BuildAdvice (items vs lineup, core items), Picks (top-3 Podium + list, sort win
-                           chance / counter effect, position filter), side panels TeamNeeds / Answers / Avoid /
-                           HowItWorks; state in the URL (?e=&a=&me=), old ?mode= links still open
+    Draft.tsx              /draft: Match / Lane switch, board ("You" first, teammates behind a toggle · vs · enemy 6
+                           or lane 2) + hero pool (target switch, search + Enter), YourPick + DraftPlan + CoreItems,
+                           Picks (top-3 Podium + list, sort win chance / counter effect, position filter), side panels
+                           TeamNeeds / Answers / Avoid / HowItWorks; state in the URL (?me=&e=&a=&m=line&l=), old
+                           ?mode= links still open
+    draft/Plan.tsx         DraftPlan: items against the lineup with reasons (PlanCard), threat cards, teammates
+                           (TeamNotes), lane matchup (LaneSummary) + usual start (LaneStart)
     About.tsx              /about: who makes the site (owner = Deadlock streamer BethakZS → TWITCH_URL), live numbers,
                            three feature cards, data / Deadlock API partner card, ingest tool link
     Counters.tsx           /counters (CountersIndexPage) and /counters/:slug (CountersPage): best counters, heroes it
@@ -493,7 +502,7 @@ src/
 | `/items/:slug` | Item page. `slug` = `itemSlug(englishName)` (`mystic-burst`) in every language — `useShopItemSlugs()` loads the English upgrade names outside EN. Unknown slug → `/items` |
 | `/matches` | Match lookup by ID + my recent matches |
 | `/matches/:matchId` | Match page (SPA only, not prerendered — rewritten to `/app` like players). `?tab=stats|lanes|timeline|analysis` opens a tab |
-| `/draft` | Draft helper. `e=` enemy slugs (≤6), `a=` teammate slugs (≤5), `me=` your hero. Old `?mode=team|build` links still parse (build without `me` = first ally) and are rewritten on the first edit. Prerendered (how it works + every hero's best counters as text) |
+| `/draft` | Draft helper. `me=` your hero, `e=` enemy slugs (≤6), `a=` teammate slugs (≤5, shown behind the "Teammates" toggle), `m=line` Lane mode with `l=` the two lane opponents. Old `?mode=team|build` links still parse (build without `me` = first ally) and are rewritten on the first edit. Prerendered (how it works + every hero's best counters as text). Main tab in the header since 24.11 |
 | `/counters` | Counter guides index (every hero → its counter page). Prerendered |
 | `/about` | About the site and the owner (streamer BethakZS, Twitch link), data source / partner. Linked from the footer ("Browse" column) and the site search ("about", "twitch", "bethakzs"). Prerendered with an `AboutPage` JSON-LD (author = BethakZS, `sameAs` Twitch) |
 | `/wiki` | Wiki: the map — interactive minimap with layers, lanes and districts, objectives, neutral camps, events, match timings, getting around. In the "three lines" menu (after Draft helper) and the site search ("wiki", "map", "urn", "midboss"…). Prerendered (all sections as text) |
@@ -711,6 +720,20 @@ tab were built and then removed on request — don't bring them back unless aske
   candidate so its rank shows: "#11 of 37"). The list jumps to the missing role only once ≥ 3 teammates are known.
   "Avoid" = advantage < −0.4% AND expected < 50% (a strong hero with one bad matchup is not "avoid"). "Answers" =
   top 3 candidates by effect vs each enemy (pairs with ≥ 300 games).
+* **Draft items (`lib/threats.ts`, 24.11):** threats per enemy — kit (ability properties: `StunDuration`,
+  `ImmobilizeDuration`, `SilenceDuration`, `SleepDuration`, `LiftDuration` ≥ 1 → "cc", weight 0.5 / ult 0.8; heal
+  properties → "heal"; ultimate with `AbilityChannelTime` 1.5–60 s → "channel") + items its players buy in ≥ 12% of
+  games (Knockdown, Silence Wave, Cursed Relic… → cc; lifesteal / heal items → heal; weight = that share, Knockdown ×2.5
+  when your hero is airborne — it stuns airborne targets longer) + damage profile (share of spirit vs weapon items in
+  its builds ≥ 55% → spirit / bullet). Strength = Σ weights, ≤ 1.5 per enemy. Answers are class-name lists per threat
+  (heal answers must still have `HealAmpReceivePenaltyPercent` < 0, spirit `TechResist`, bullet `BulletResist` or
+  `FireRateSlow`). Plan score = √strength × build fit (weapon answer × 0.4 + your weapon share, spirit likewise) ×
+  1 / 0.4 / 0.2 for a threat's 1st / 2nd / 3rd answer (one threat can't fill the list) + match data (`itemsVsLineup`
+  × 40, clamped −0.6…+0.9). Lane mode: kit threats only, items of tiers 1–2, data from items bought ≤ 12 min.
+  Teammates: kit ability on the ALLY_BARRIER / ALLY_HEAL lists → "keep close against <enemy ultimates>"; save items
+  (Divine Barrier, Rescue Beam…) ≥ 20%; an ally buying a heal / channel answer ≥ 30% → that threat × 0.6 and "no need to
+  double it". **"For allies" and "airborne" are class-name lists** (descriptions come in the page's language) — a new
+  hero with a shield / heal for allies or flight goes into `ALLY_BARRIER` / `ALLY_HEAL` / `AIRBORNE`.
 * **Counter page** (`countersOf()`): every hero's effect vs this one enemy (same formula, ≥ 300 games); counters =
   effect > 0 best first, victims = effect < 0. Rows show the raw pair WR, the **expected** WR (hero's WR − (enemy WR −
   50%)) and the effect, so "43% vs Haze is still a counter" reads right. Items against a hero = `itemsVsLineup()`
@@ -772,8 +795,9 @@ Rules:
 * Skill-order grid (`.skill-grid`) has `overflow-x: auto`, which clips anything drawn outside its box — keep its
   small inner padding so the ability icon rings on the left aren't cut off.
 * Hero → Builds tab has no explanatory blurb under the title (removed on request) — just the mode switch and tag chips.
-* Header nav (owner's request): main tabs **Tier list, Heroes, Builds, Items**; then a "three lines" button that opens
-  Draft helper, Wiki, Patches, Players, Matches, Leaderboard (`NAV` / `MORE` in `Layout.tsx`; the button gets the nav underline when one
+* Header nav (owner's request): main tabs **Tier list, Heroes, Builds, Items, Draft** (Draft since 24.11, short label
+  `nav.draftShort`); then a "three lines" button that opens
+  Wiki, Patches, Players, Matches, Leaderboard (`NAV` / `MORE` in `Layout.tsx`; the button gets the nav underline when one
   of them is open). In the mobile burger all of them are listed. Mirrored in the prerender `navBlock()`.
 * Items without stats for the current filters are not shown in the shop (owner: no "no data" cells), and the prerender
   only writes item pages for items with stats.
@@ -805,8 +829,8 @@ Rules:
 * Section explanations go in a muted `.section-sub` paragraph under `SectionTitle`, not in its `eyebrow` (long
   uppercase eyebrows are hard to read).
 * Header account corner: guests see a small "Log in" pill (icon only < 640px); with an account or an "It's me"
-  profile it becomes the round avatar (`.me-link`) that opens `.account-menu__list`. "Draft helper" is the first
-  entry of the "three lines" menu (main tabs stay the owner's four).
+  profile it becomes the round avatar (`.me-link`) that opens `.account-menu__list`. "Draft" is the fifth main tab
+  since 24.11 (owner: "put the draft helper up in the panel").
 * Favourites: `FavButton` — labelled pill first in the hero header tags row, icon-only before the chevron of a build card.
 * "Sign in with Steam" is a plain `<a>` (full navigation to Steam), styled `.steam-btn` (cool steel, not brass —
   it's Steam's button, not ours).
@@ -837,7 +861,7 @@ Rules:
 * Home meta snapshot: three panels in a row on desktop; **below 720px a horizontal scroll-snap row** (86% wide
   cards, peek of the next) instead of a ~1000px column (owner: "the top-5 cards don't swipe on mobile").
 * Home "Draft helper" teaser (`.draft-promo`) sits between the meta snapshot and the hero grid; the banner chips have
-  a "Draft helper" chip second. The header keeps the owner's 4 main tabs.
+  a "Draft helper" chip second.
 * **Wiki (/wiki, 17.11):** the minimap is the game PNG used as a mask over warm panel gradients (+ brass drop-shadow on a
   wrapper — a filter on the masked element itself would be masked away). Everything on it is SVG in a 0–1000 viewBox over
   a square canvas; "seen from Archmother" flips coordinates (1−x, 1−y) and rotates only the ground image. The tooltip
@@ -983,10 +1007,14 @@ Rules:
 - `/builds` — браузер білдів (герой, сортування, пошук, фільтр за тегами, пагінація)
 - `/players`, `/players/:id` — пошук гравця і профіль (ранг, форма, матчі, герої, тімейти), кнопка «Це я»,
   «Порівняти зі мною»
-- `/draft` — **драфт-помічник** (перероблено 16.11): одна дошка — 6 ворогів, слот «Ти» і 5 союзників; список героїв
-  поруч (пошук + Enter). Результати: топ-3 «подіум» з портретами, список, сортування «шанс перемоги / сила контрпіку»,
-  «відповідь на кожного ворога», «краще не брати», роль, якої бракує; коли поставиш свого героя — твій матчап (місце
-  серед усіх варіантів), предмети проти складу, основні предмети. Посилання з драфтом можна скопіювати
+- `/draft` — **драфт-помічник** (вкладка «Драфт» у шапці; від 24.11 спершу предмети): «Ти» + 6 ворогів → «Що збирати
+  проти них» — предмети з причинами (здібності ворогів і що зазвичай купують гравці на них, напр. «Струс · 35%» у Пейдж;
+  для героїв у повітрі — окреме попередження про Струс) і перевіркою за матчами; «Чого чекати від ворогів» — картки
+  загроз (стани, лікування, урон духом / зброєю, ульти, які можна перебити) з відповідями; кнопка «Тімейти» — хто дає
+  тобі бар'єр / лікування проти ворожих ульт, хто вже бере відповідь («не треба дублювати»). Режим «Лінія»: ти + 2
+  суперники → легка / рівна / важка лінія, ранні предмети (тір 1–2), звичний старт. Нижче, як і раніше: твій матчап,
+  основні предмети, інші піки (топ-3 «подіум»), «відповідь на кожного ворога», «краще не брати». Посилання з драфтом
+  можна скопіювати
 - `/counters`, `/counters/:slug` — **сторінки контрпіків** для кожного героя («Хто контрить Haze»): найкращі контрпіки
   (вінрейт проти, очікуваний, ефект), кого обігрує герой, предмети проти нього, кнопка «додати решту ворожої команди»
 - **Акаунти**: `/login` — вхід через Steam або логін/e-mail + пароль, реєстрація без підтвердження пошти;
@@ -1050,6 +1078,7 @@ Rules:
 | Ліміт функцій Cloudflare | ⚠️ 23.11: лист про 90% денного ліміту (100 тис. викликів). Зроблено знімки API в `dist/data/` — сторінки зі стандартними фільтрами більше не викликають проксі (розділ 6, п. 32). Запушено 23.11 (`c0d32b5`), на живому сайті перевірено: сторінка героя й головна — 0 викликів проксі, лише `/api/nav`; 705 знімків + 508 профілів Steam. Cloudflare за ту добу: 4,26 тис. унікальних IP, 152 тис. запитів (з них ~90 тис. — функції). 23.11 ввечері прийшов другий лист (94%) — він про ту саму добу, що скінчилась о 02:00 Київ 23.11, тобто ще без знімків (пуш був о 01:20). Перевірено 23.11 о 23:05 Київ (21 година нової доби вже пройшла): функції живі — проксі віддає 200 з `x-proxy-upstream`, маячок `/api/nav` — 204, тобто ліміт не вичерпано. На живому сайті: головна, сторінка героя, білди, контрпіки, предмети — по 1 виклику функції (`/api/nav`), лідерборд — 3 (проксі, як і має бути); `robots.txt` закриває `/api/nav` від ботів, тож рендери Googlebot тепер не витрачають виклики. **Власнику:** глянути Metrics (розділ 9, п. 5) — по графіку вже буде видно нову добу |
 | Ребілд кожні 6 годин | ⚠️ 23.11: фактично не працює. GitHub Actions за добу запустив лише один ребілд (07:36 UTC, крон `06:17`), а `00:17`, `12:17` і `18:17` пропустив — знімки на живому сайті о 21:06 UTC були 13,5 год давнини замість ≤6. Безкоштовні крони GitHub не гарантовані: запізнюються (цей — на 78 хв) і пропускаються під навантаженням. Варіанти: частіші крони (кожні 2–3 год → 240–360 збірок на місяць із 500 на Free) або Cloudflare Cron Trigger у Worker, що сам б'є по deploy hook (точний час, виклики крона не з денного ліміту). **Власнику:** вирішити, чи робити |
 | Twitch-набір | ✅ 17.11: `twitch-kit/` — 10 панелей, банер профілю, офлайн-банер, плашка для OBS у стилі сайту + інструкція (`twitch-kit/README.md`). Генерується з `twitch-kit/src/kit.html` через headless Chrome, у збірку сайту не входить. Власник поставив лише панель Deadbuff і попросив решту «у своєму стилі, не Deadlock» → 17.11: `twitch-kit/panels-bethak/` — 8 панелей у стилі його банера (нічна кімната, фіолетовий неон, крейда з короною, шматки банера), з `twitch-kit/src/bethak.html`. Ще не закомічено — **власнику:** вирішити, чи тримати в репозиторії |
+| Драфт і адмінка 24.11 | ⏳ Зроблено локально, **не запушено**: драфт «спершу предмети» + «Лінія» + тімейти, «Драфт» у шапці, ніки Steam в адмінці (розділ 6, п. 34). Збірка — 2190 сторінок |
 
 Перевірено локально: реєстрація / вхід / вихід / обране через `wrangler pages dev` (D1 локально), захист від
 підробленої cookie, унікальність логіна без урахування регістру (і для кирилиці), проксі (повторний запит 0,8 с → 0,008 с),
@@ -1386,6 +1415,23 @@ deadbuff.net (Twitch-панель, Reddit, Discord, опис репозитор�
     GitHub, засновник BethakZS із Twitch). Збірка — 2190 сторінок. Того ж дня власник прислав перші експорти GSC
     (`gsc/2026-11-24-*.zip`): звіт «Сторінки» в GSC застиг на 16.11 (910 проіндексовано / 1153 ні, покази 23 → 161 на
     день), тобто фікси 19–21.11 у ньому ще не видно
+34. **24.11 — адмінка, драфт у шапці, новий драфт-помічник.** Запит: (1) «щоб показувались ніки й посилання на Steam,
+    а не цифри» (у «Нових акаунтах» були `player-1579`); (2) «драфт-помічник нагорі в панельці»; (3) «основний флоу — ти
+    вводиш себе, потім 6 ворожих, і воно показує прям айтеми, проти кого й навіщо (я за Віндікту, вороги можуть зібрати
+    наковальню — покажи предмети проти наковальні); перемикач, щоб додати тімейтів (напр. з Пейдж — вона дасть щит
+    проти ульти Швейцара); за замовчуванням я і 6 ворогів; пункт «драфт Line»: я і 2 вороги — що збирати на лінії».
+    Зроблено: (1) адмінка показує нік Steam, аватар і посилання на профіль (таблиця акаунтів і візити), логін на сайті —
+    дрібно поруч; реєстрація через Steam тепер бере нік із Deadlock API з тим самим user-agent і ключем, що проксі, а
+    якщо там порожньо — з публічного XML профілю Steam (перші акаунти отримали `player-…`, бо запит без них імені не
+    дав; уже створені логіни не перейменовано). (2) «Драфт» — п'ята головна вкладка. (3) Драфт перероблено: «Ти»
+    першим, вороги, тімейти за кнопкою, перемикач «Матч / Лінія»; предмети з причинами, картки загроз, тімейти, лінія
+    (Частина I, «Draft items»). «Наковальня» в гравців — це **Струс (Knockdown)**: він довше оглушує героїв у повітрі,
+    тож для Віндікти, Сивого Кігтя, Плюща, Кишені й Денні Струс у ворогів важить більше. Найчастіше Струс беруть Пейдж
+    (35%), Сон (20%), Швейцар (19%). Перевірено локально (UA / DE / EN, 800 px і 375 px без горизонтального скролу):
+    Віндікта проти Пейдж, Сну, Швейцара… — «Струс · 35%» і попередження про політ; з тімейтами Пейдж — «Сюжетні лати —
+    дає бар'єр союзнику, тримайся поруч проти Гість готелю (Швейцар)…», «часто бере Священний бар'єр (41%)»; лінія
+    Віндікта проти Імли й Абрамса — «Легка лінія», ранні предмети, звичний старт. Адмінка — на локальній базі з
+    тестовим акаунтом. **Власнику:** погратися з драфтом на живому сайті після пушу і сказати, які пояснення не так
 29. **18.11 — статистика без власника + візити детально.** Запит: «щоб моя статистика не показувалась (з мого
     акаунта)» і «трекати, хто на які сторінки заходить — з однією сесією чи з різними, щоб бачити, що перегляди не
     накручують»; старий розділ «Відвідування» лишити, детальніше — нижче. Зроблено: `/api/nav` не рахує акаунти з
@@ -1711,3 +1757,5 @@ Steam приймає `realm`/`return_to` з `http://localhost:8788` для те�
   знайдено, що ребілд кожні 6 годин фактично запускається раз на добу; оновлено розділ 2 (два рядки стану)
 - **24.11.2026** — розбір запиту «deadbuff» (Google ще не знає бренд) і як передавати звіти GSC (папка `gsc/`); бренд
   у h1 і JSON-LD головної (розділ 6, п. 33); оновлено розділи 5, 6 і Частину I (SEO prerender), `.gitignore`
+- **24.11.2026 (друга частина)** — ніки Steam в адмінці, «Драфт» у шапці, драфт-помічник «спершу предмети» з режимом
+  «Лінія» і тімейтами (розділ 6, п. 34); оновлено розділи 1, 2, 6 і Частину I (§1, §3, §4 файли, маршрути, правила драфту, шапка)

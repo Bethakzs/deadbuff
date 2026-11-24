@@ -679,40 +679,307 @@
   font-size: 15px;
 }
 
-.draft-items {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 10px;
+/* ---------------- items against the lineup (pages/draft/Plan.tsx, 24.11) ---------------- */
+.draft-pickme {
+  margin-top: 28px;
+  padding: 16px 18px;
+  border: 1px dashed rgb(217 169 91 / 0.45);
+  border-radius: var(--radius-lg);
+  color: var(--text-2);
+  font-weight: 600;
 }
-.draft-item {
-  display: flex;
+.plan-items {
+  display: grid;
+  gap: 8px;
+}
+.plan-item {
+  --slot: 217 169 91;
+  display: grid;
+  grid-template-columns: 26px auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 10px 14px 10px 10px;
   border-radius: 12px;
-  background: var(--panel);
+  background: linear-gradient(90deg, rgb(var(--slot) / 0.09), var(--panel) 45%);
   border: 1px solid var(--line);
 }
-.draft-item__text {
+.plan-item.slot-weapon {
+  --slot: 222 145 76;
+}
+.plan-item.slot-vitality {
+  --slot: 116 178 96;
+}
+.plan-item.slot-spirit {
+  --slot: 168 120 220;
+}
+.plan-item__rank {
+  color: var(--faint);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+.plan-item__body {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
-.draft-item__text b {
+.plan-item__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.plan-item__head b {
+  font-size: 16px;
+}
+.plan-item__data .delta {
+  font-size: 13px;
+  font-weight: 700;
+}
+.plan-item__why {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+.plan-item__why li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.plan-item__threat {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.plan-item__threat::after {
+  content: ' ·';
+  color: var(--faint);
+}
+.plan-item__vs {
+  display: flex;
+  gap: 3px;
+}
+
+/* one reason: hero avatar + ability / item / damage share */
+.src-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 1px 8px 1px 2px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.04);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.src-chip .hero-avatar {
+  flex: none;
+}
+.src-chip__text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.draft-item__vs {
+.src-chip--item {
+  border-color: rgb(196 64 47 / 0.35);
+}
+
+/* what to expect from the enemies */
+.threats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 10px;
+}
+.threat {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 2px solid rgb(196 64 47 / 0.55);
+}
+.threat__head {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.threat__level {
+  display: inline-flex;
+  gap: 4px;
+}
+.threat__level i {
+  width: 7px;
+  height: 7px;
+  rotate: 45deg;
+  background: var(--line-strong);
+}
+.threat__level i.is-on {
+  background: rgb(196 64 47);
+}
+.threat__src {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.threat__note {
+  margin: 0;
+  color: var(--brass-hi);
+}
+.threat__note.is-covered {
+  color: rgb(var(--team1-rgb));
+}
+.threat__answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.threat__answer {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
 }
-.draft-item__vs .delta {
-  margin-right: 4px;
-  font-size: 13px;
-  font-weight: 700;
+
+/* teammates */
+.team-notes {
+  display: grid;
+  gap: 8px;
 }
+.team-note {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr) auto;
+  grid-template-areas: 'hero list fx';
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px 10px 10px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgb(var(--hero) / 0.12), var(--panel) 40%);
+  border: 1px solid rgb(var(--team1-rgb) / 0.25);
+}
+.team-note__hero {
+  grid-area: hero;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.team-note__fx {
+  grid-area: fx;
+  white-space: nowrap;
+}
+.team-note__list {
+  grid-area: list;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.team-note__list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.team-note__vs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.team-note__item .item-icon {
+  flex: none;
+}
+
+/* lane mode: your lane matchup */
+.lane-sum {
+  --tone: 217 169 91;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 28px;
+  margin-top: 28px;
+  padding: 16px 20px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(100deg, rgb(var(--hero) / 0.2), var(--panel) 55%);
+  border: 1px solid rgb(var(--tone) / 0.5);
+}
+.lane-sum.is-easy {
+  --tone: 116 178 96;
+}
+.lane-sum.is-hard {
+  --tone: 196 64 47;
+}
+.lane-sum__main {
+  display: grid;
+  gap: 4px;
+}
+.lane-sum__verdict {
+  font-size: 30px;
+  color: rgb(var(--tone));
+}
+.lane-sum__vs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+.lane-sum__vs li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lane-sum__name {
+  font-weight: 600;
+}
+.lane-sum__sub {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* board: mode switch, the "add teammates" button, two big lane slots */
+.draft-board__mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.draft-slots__wide {
+  grid-column: span 5;
+}
+.draft-mates-btn {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 2px;
+  width: 100%;
+  min-height: 88px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  border: 1px dashed var(--line-strong);
+  background: rgb(0 0 0 / 0.18);
+  color: var(--text-2);
+  font-weight: 600;
+  text-align: left;
+  transition: border-color var(--dur), color var(--dur);
+}
+.draft-mates-btn:hover {
+  border-color: rgb(var(--c) / 0.6);
+  color: var(--text);
+}
+.draft-mates-btn .draft-slot__plus {
+  display: inline;
+  margin-right: 4px;
+}
+.draft-slots.is-lane {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 4fr);
+}
+
 .draft-core {
   display: flex;
   flex-wrap: wrap;
@@ -1065,5 +1332,38 @@
   }
   .ctr-guide {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+
+/* items / threats / teammates / lane on phones */
+@media (max-width: 720px) {
+  .plan-item {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px 10px;
+    padding: 10px;
+  }
+  .plan-item__rank {
+    display: none;
+  }
+  .plan-item__vs {
+    grid-column: 2;
+  }
+  .team-note {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'hero fx' 'list list';
+  }
+  .lane-sum {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 14px;
+  }
+  .lane-sum__verdict {
+    font-size: 24px;
+  }
+  .draft-mates-btn {
+    min-height: 58px;
+    padding: 6px 12px;
+  }
+  .draft-mates-btn small {
+    display: none;
   }
 }

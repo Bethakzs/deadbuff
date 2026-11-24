@@ -13,17 +13,17 @@ import { Diamond } from './UI';
 
 type NavItem = { to: string; key: MsgKey };
 
-/** Main tabs in the header (owner's order: tier list first). */
+/** Main tabs in the header (owner's order: tier list first; the draft helper joined them on 24.11). */
 const NAV: NavItem[] = [
   { to: '/tier-list', key: 'nav.tierList' },
   { to: '/heroes', key: 'nav.heroes' },
   { to: '/builds', key: 'nav.builds' },
   { to: '/items', key: 'nav.items' },
+  { to: '/draft', key: 'nav.draftShort' },
 ];
 
 /** Secondary sections behind the "three lines" menu at the end of the nav (owner's request). */
 const MORE: NavItem[] = [
-  { to: '/draft', key: 'nav.draft' },
   { to: '/wiki', key: 'nav.wiki' },
   { to: '/patches', key: 'nav.patches' },
   { to: '/players', key: 'nav.players' },

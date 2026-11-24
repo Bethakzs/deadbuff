@@ -24,7 +24,7 @@ export interface AdminStats {
   signups: { day: string; steam: number; password: number }[];
   events: Record<AuthEvent, number>;
   eventsSince: number | null;
-  recent: { username: string; viaSteam: boolean; steamLinked: boolean; createdAt: number; lastLoginAt: number }[];
+  recent: { username: string; accountId: number | null; viaSteam: boolean; steamLinked: boolean; createdAt: number; lastLoginAt: number }[];
   traffic: {
     since: string | null;
     views: number;
@@ -56,6 +56,7 @@ export interface VisitStats {
     id: string;
     day: string;
     username: string | null;
+    accountId: number | null;
     views: number;
     sessions: number;
     pages: number;
@@ -74,6 +75,7 @@ export interface VisitStats {
     id: number;
     visitor: string;
     username: string | null;
+    accountId: number | null;
     startedAt: number;
     lastAt: number;
     views: number;

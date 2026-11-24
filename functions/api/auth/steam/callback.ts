@@ -6,7 +6,7 @@
  */
 import { currentUser, needAccounts, usernameFromPersona } from '../../../../server/auth';
 import { createUser, setAccount, touchLogin, userByAccount, usernameTaken } from '../../../../server/db';
-import type { Fn } from '../../../../server/env';
+import type { Env, Fn } from '../../../../server/env';
 import { getCookie, safeNext } from '../../../../server/http';
 import { sessionCookies } from '../../../../server/session';
 import { logEvent } from '../../../../server/stats';
@@ -22,12 +22,26 @@ function redirect(origin: string, next: string, steam: string | null, cookies: s
   return new Response(null, { status: 302, headers });
 }
 
-/** Steam persona name for a new account's username (best effort). */
-async function personaName(accountId: number): Promise<string | undefined> {
+/**
+ * Steam persona name for a new account's username (best effort): the Deadlock API first, with the same user agent
+ * and key as the proxy (the first Steam accounts all got "player-1234", so the bare request gave no name here),
+ * then the public Steam profile XML.
+ */
+async function personaName(env: Env, accountId: number): Promise<string | undefined> {
   try {
-    const res = await fetch(`https://api.deadlock-api.com/v1/players/steam?account_ids=${accountId}`);
-    const list = (await res.json()) as { personaname?: string }[];
-    return list[0]?.personaname;
+    const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'deadbuff.net' };
+    if (env.DEADLOCK_API_KEY) headers['x-api-key'] = env.DEADLOCK_API_KEY;
+    const res = await fetch(`https://api.deadlock-api.com/v1/players/steam?account_ids=${accountId}`, { headers });
+    const list = res.ok ? ((await res.json()) as { personaname?: string }[]) : [];
+    if (list[0]?.personaname) return list[0].personaname;
+  } catch {
+    /* fall through to Steam */
+  }
+  try {
+    const steam64 = (BigInt(accountId) + 76561197960265728n).toString();
+    const res = await fetch(`https://steamcommunity.com/profiles/${steam64}/?xml=1`, { headers: { 'user-agent': 'deadbuff.net' } });
+    const xml = res.ok ? await res.text() : '';
+    return xml.match(/<steamID><!\[CDATA\[([\s\S]*?)\]\]><\/steamID>/)?.[1];
   } catch {
     return undefined;
   }
@@ -65,7 +79,7 @@ export const onRequestGet: Fn = async ({ request, env, waitUntil }) => {
     waitUntil(touchLogin(ctx.db, user.id).then(() => undefined));
     waitUntil(logEvent(ctx.db, 'login_steam', user.id));
   } else {
-    const base = usernameFromPersona(await personaName(accountId));
+    const base = usernameFromPersona(await personaName(env, accountId));
     let name = base;
     for (let i = 0; i < 6 && (await usernameTaken(ctx.db, name)); i++) name = `${base.slice(0, 19)}-${Math.floor(1000 + Math.random() * 9000)}`;
     try {

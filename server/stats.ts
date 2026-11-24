@@ -194,7 +194,8 @@ export interface AdminStats {
   events: Record<AuthEvent, number>;
   /** first logged event (unix) — sign-ins are counted from then on */
   eventsSince: number | null;
-  recent: { username: string; viaSteam: boolean; steamLinked: boolean; createdAt: number; lastLoginAt: number }[];
+  /** accountId: linked Steam account (the page shows its persona name, avatar and profile link) */
+  recent: { username: string; accountId: number | null; viaSteam: boolean; steamLinked: boolean; createdAt: number; lastLoginAt: number }[];
   traffic: {
     /** first day with counted views */
     since: string | null;
@@ -245,6 +246,7 @@ export interface Visitor {
   id: string;
   day: string;
   username: string | null;
+  accountId: number | null;
   views: number;
   sessions: number;
   /** distinct pages */
@@ -260,6 +262,7 @@ export interface Visit {
   id: number;
   visitor: string;
   username: string | null;
+  accountId: number | null;
   startedAt: number;
   lastAt: number;
   views: number;
@@ -302,7 +305,7 @@ function visitStatements(db: D1Database, sinceDay: string, adminIds: string) {
       .bind(sinceDay, adminIds),
     db
       .prepare(
-        `SELECT v.vid AS id, MIN(v.day) AS day, MAX(u.username) AS username, SUM(v.views) AS views, COUNT(*) AS sessions,
+        `SELECT v.vid AS id, MIN(v.day) AS day, MAX(u.username) AS username, MAX(u.account_id) AS accountId, SUM(v.views) AS views, COUNT(*) AS sessions,
                 (SELECT COUNT(DISTINCT p.path) FROM visits w JOIN visit_pages p ON p.visit_id = w.id WHERE w.vid = v.vid) AS pages,
                 MAX(v.country) AS country, MAX(v.device) AS device, MAX(v.browser) AS browser, MAX(v.os) AS os, MAX(v.last_at) AS lastAt
          FROM visits v LEFT JOIN users u ON u.id = v.user_id
@@ -316,7 +319,7 @@ function visitStatements(db: D1Database, sinceDay: string, adminIds: string) {
     count('os'),
     db
       .prepare(
-        `SELECT v.id, v.vid AS visitor, u.username, v.started_at AS startedAt, v.last_at AS lastAt, v.views, v.lang,
+        `SELECT v.id, v.vid AS visitor, u.username, u.account_id AS accountId, v.started_at AS startedAt, v.last_at AS lastAt, v.views, v.lang,
                 v.country, v.device, v.browser, v.os, v.ref,
                 (SELECT group_concat(x, ' ') FROM (
                    SELECT p.path || ',' || (p.at - v.started_at) AS x FROM visit_pages p WHERE p.visit_id = v.id ORDER BY p.n LIMIT 40
@@ -359,7 +362,7 @@ export async function adminStats(db: D1Database, days: number, adminIds: number[
       db.prepare('SELECT MIN(at) AS at FROM auth_events'),
       db.prepare('SELECT COUNT(*) AS n, COUNT(DISTINCT user_id) AS users FROM favorites'),
       db.prepare(
-        `SELECT username, pass_hash IS NULL AS viaSteam, account_id IS NOT NULL AS steamLinked, created_at AS createdAt, last_login_at AS lastLoginAt
+        `SELECT username, account_id AS accountId, pass_hash IS NULL AS viaSteam, account_id IS NOT NULL AS steamLinked, created_at AS createdAt, last_login_at AS lastLoginAt
          FROM users ORDER BY created_at DESC LIMIT 25`,
       ),
       db

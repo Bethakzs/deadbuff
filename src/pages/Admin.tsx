@@ -1,12 +1,15 @@
 import { motion } from 'framer-motion';
-import { useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Empty, ErrorState, Page, Panel, SectionTitle, Segmented, Skeleton } from '../components/UI';
+import { useSteamProfiles } from '../hooks/useStats';
 import { LANGS, useT, type MsgKey } from '../i18n';
 import { ADMIN_PERIODS, dayRange, useAdminStats, type AdminPeriod, type AdminStats, type AuthEvent, type Count, type VisitStats } from '../lib/admin';
 import { AuthFailure, useAuth } from '../lib/auth';
 import { fmtDate, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { useDocumentMeta } from '../lib/seo';
+import { accountIdToSteam64 } from '../lib/steam';
+import type { SteamProfile } from '../lib/types';
 
 /*
  * /admin — site statistics for the owner (users listed in the ADMIN_USERS variable on Cloudflare):
@@ -105,14 +108,33 @@ function useRegionName() {
   }, [meta.locale]);
 }
 
-function VisitorTag({ id, username }: { id: string; username: string | null }) {
+/** Steam profiles of the accounts on the page (persona name + avatar), filled once per report. */
+const SteamNames = createContext<Map<number, SteamProfile>>(new Map());
+
+const steamUrl = (accountId: number, p?: SteamProfile) => p?.profileurl ?? `https://steamcommunity.com/profiles/${accountIdToSteam64(accountId)}/`;
+
+/** Account name: the Steam nickname (avatar + link to the profile) when Steam is linked, the site username otherwise. */
+function AccountName({ username, accountId }: { username: string; accountId: number | null }) {
+  const p = useContext(SteamNames).get(accountId ?? -1);
+  if (accountId == null) return <b className="admin-visitor__name">{username}</b>;
+  const nick = p?.personaname;
+  return (
+    <a className="admin-steam" href={steamUrl(accountId, p)} target="_blank" rel="noreferrer noopener" title={username}>
+      {p?.avatar ? <img src={p.avatar} alt="" width={20} height={20} loading="lazy" /> : <span className="admin-steam__ph" />}
+      <b className="admin-visitor__name">{nick ?? username}</b>
+      {nick && nick !== username && <span className="muted small admin-steam__user">{username}</span>}
+    </a>
+  );
+}
+
+function VisitorTag({ id, username, accountId }: { id: string; username: string | null; accountId: number | null }) {
   const { t } = useT();
   return (
     <span className="admin-visitor">
       <span className="admin-visitor__id num" style={{ ['--h' as string]: hue(id) }} title={t('admin.v.peopleHint')}>
         #{id}
       </span>
-      {username ? <b className="admin-visitor__name">{username}</b> : <span className="muted">{t('admin.v.guest')}</span>}
+      {username ? <AccountName username={username} accountId={accountId} /> : <span className="muted">{t('admin.v.guest')}</span>}
     </span>
   );
 }
@@ -221,7 +243,7 @@ function VisitsDetail({ v }: { v: VisitStats }) {
                   {v.people.map((p) => (
                     <li key={`${p.id}-${p.day}`}>
                       <div>
-                        <VisitorTag id={p.id} username={p.username} />
+                        <VisitorTag id={p.id} username={p.username} accountId={p.accountId} />
                         <span className="muted small admin-people__meta">
                           {[region(p.country), device(p.device), other(p.browser), other(p.os)].filter(Boolean).join(' · ')}
                         </span>
@@ -259,7 +281,7 @@ function VisitsDetail({ v }: { v: VisitStats }) {
                   {v.recent.slice(0, shown).map((r) => (
                     <li key={r.id}>
                       <div className="admin-visits__head">
-                        <VisitorTag id={r.visitor} username={r.username} />
+                        <VisitorTag id={r.visitor} username={r.username} accountId={r.accountId} />
                         <span className="muted small">
                           {[region(r.country), device(r.device), other(r.browser), other(r.os), langLabel(r.lang)].filter(Boolean).join(' · ')}
                         </span>
@@ -305,9 +327,14 @@ function Report({ s }: { s: AdminStats }) {
     s.days ? new Date(Date.now() - (s.days - 1) * 86400_000).toISOString().slice(0, 10) : fallback ?? new Date().toISOString().slice(0, 10);
   const langName = (id: string) => LANGS.find((l) => l.id === id)?.label ?? id.toUpperCase();
   const topMax = Math.max(1, ...s.traffic.top.map((p) => p.views));
+  const steamIds = useMemo(
+    () => [...s.recent, ...s.visits.people, ...s.visits.recent].flatMap((r) => (r.accountId == null ? [] : [r.accountId])),
+    [s],
+  );
+  const profiles = useSteamProfiles(steamIds);
 
   return (
-    <>
+    <SteamNames.Provider value={profiles}>
       <SectionTitle title={t('admin.accounts')} />
       <div className="admin-tiles">
         <Tile value={fmtInt(u.total)} label={t('admin.users')} sub={t('admin.newInPeriod', { n: u.newTotal })} accent={BRASS} />
@@ -416,13 +443,23 @@ function Report({ s }: { s: AdminStats }) {
             <tbody>
               {s.recent.map((r) => (
                 <tr key={`${r.username}-${r.createdAt}`}>
-                  <td className="admin-table__user">{r.username}</td>
+                  <td className="admin-table__user">
+                    <AccountName username={r.username} accountId={r.accountId} />
+                  </td>
                   <td>
                     <span className={`admin-method admin-method--${r.viaSteam ? 'steam' : 'password'}`}>
                       {t(r.viaSteam ? 'admin.method.steam' : 'admin.method.password')}
                     </span>
                   </td>
-                  <td className="muted">{r.steamLinked ? t('admin.yes') : t('admin.no')}</td>
+                  <td className="muted">
+                    {r.accountId != null ? (
+                      <a className="link-more" href={steamUrl(r.accountId, profiles.get(r.accountId))} target="_blank" rel="noreferrer noopener">
+                        {t('admin.steamProfile')} ↗
+                      </a>
+                    ) : (
+                      t('admin.no')
+                    )}
+                  </td>
                   <td className="hide-sm muted num">{fmtDate(r.createdAt)}</td>
                   <td className="muted">{ago(r.lastLoginAt)}</td>
                 </tr>
@@ -432,7 +469,7 @@ function Report({ s }: { s: AdminStats }) {
         </div>
       )}
       <p className="muted small-note">{t('admin.note')}</p>
-    </>
+    </SteamNames.Provider>
   );
 }
 

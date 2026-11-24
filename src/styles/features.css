@@ -1095,6 +1095,31 @@ button.player-result {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* account with linked Steam: avatar + Steam nickname (link to the profile) + the site username */
+.admin-steam {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.admin-steam img,
+.admin-steam__ph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+.admin-steam__ph {
+  background: var(--panel-3);
+}
+.admin-steam:hover .admin-visitor__name {
+  color: var(--brass-hi);
+}
+.admin-steam__user {
+  font-weight: 400;
+  white-space: nowrap;
+}
 .admin-vpages td,
 .admin-vpages th {
   padding-top: 6px;

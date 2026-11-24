@@ -8,9 +8,9 @@ import { PositionChips, PositionFilter, RoleBars, type PositionValue } from '../
 import { Empty, ErrorState, Panel, Page, SectionTitle, Segmented, Skeleton } from '../components/UI';
 import { Delta, WinRate } from '../components/WinRate';
 import { useHeroes, useItems } from '../hooks/useAssets';
-import { useCounterStats, useHeroRows, useItemStats, useItemStatsVsEnemies, useSynergyStats } from '../hooks/useStats';
+import { useCounterStats, useHeroRows, useItemStats, useSynergyStats } from '../hooks/useStats';
 import { useT, type MsgKey } from '../i18n';
-import { answersTo, itemsVsLineup, pairIndex, rankPicks, teamRoles, type PairEffect, type PickScore } from '../lib/draft';
+import { answersTo, pairIndex, rankPicks, teamRoles, type PairEffect, type PickScore } from '../lib/draft';
 import { fmtDelta } from '../lib/format';
 import { heroCard, heroRgb } from '../lib/heroes';
 import { isShopItem } from '../lib/items';
@@ -18,32 +18,38 @@ import { playsPosition } from '../lib/roles';
 import { useDocumentMeta } from '../lib/seo';
 import type { Hero } from '../lib/types';
 import { CounterGuideGrid } from './Counters';
+import { DraftPlan } from './draft/Plan';
 
 /*
- * /draft — the draft helper (rebuilt 16.11.2026, replaces the three-mode version).
+ * /draft — the draft helper (rebuilt 16.11.2026; item-first since 24.11.2026, owner's request).
  *
- * One board, the way a Deadlock lobby looks: the enemy team (6), YOU, and up to 5 teammates.
- *   - "Best picks" always ranks the heroes for YOUR slot: own win rate + counter effects vs every enemy
- *     + synergy with every teammate (lib/draft.ts). Top 3 get a podium.
- *   - Once you put a hero into "You": your matchup, its rank among all options, the items that beat this
- *     enemy lineup and the hero's core items.
+ * Main flow: YOU first, then the 6 enemies → what to buy against them, against whom and why (pages/draft/Plan.tsx,
+ * lib/threats.ts): enemy kits + the items their players usually buy → threats → answer items, checked against
+ * match data of your hero vs these enemies. Teammates are behind a toggle (who shields you, who already buys
+ * the answer). "Lane" mode: you + 2 lane opponents → lane matchup, early items, the usual start.
+ *   - "Best picks" still ranks heroes for YOUR slot (own win rate + counter effects + synergy, lib/draft.ts):
+ *     the main list while "You" is empty, "other options" below the items once it is set.
  *   - Side panels: your team's roles, the best answer to each enemy, and the picks to avoid.
- * The draft lives in the URL (?e=enemy slugs&a=teammate slugs&me=your hero), so it can be shared.
+ * The draft lives in the URL (?me=your hero&e=enemies&a=teammates&m=line&l=lane opponents), so it can be shared.
  * Old links (?mode=team|build, `me` inside `a`) still open — the first edit rewrites them to this form.
  */
 const ENEMIES = 6;
 const MATES = 5;
+const LANE = 2;
 const PAGE = 10;
 type Target = 'enemy' | 'me' | 'ally';
-/** where the pool continues once a side is full */
-const ORDER: Target[] = ['enemy', 'me', 'ally'];
+/** where the pool continues once a side is full: you first, then the enemies */
+const ORDER: Target[] = ['me', 'enemy', 'ally'];
 
 interface DraftState {
   enemies: Hero[];
   mates: Hero[];
+  /** lane mode: your two lane opponents */
+  lane: Hero[];
   me?: Hero;
+  isLane: boolean;
 }
-type DraftPatch = { e?: Hero[]; a?: Hero[]; me?: Hero | null };
+type DraftPatch = { e?: Hero[]; a?: Hero[]; l?: Hero[]; me?: Hero | null; m?: 'line' | null };
 
 function parseDraft(params: URLSearchParams, bySlug: Map<string, Hero>): DraftState {
   const list = (key: string, cap: number, skip: Set<number>) => {
@@ -57,10 +63,11 @@ function parseDraft(params: URLSearchParams, bySlug: Map<string, Hero>): DraftSt
   const enemies = list('e', ENEMIES, new Set());
   const enemyIds = new Set(enemies.map((h) => h.id));
   const allies = list('a', ENEMIES, enemyIds);
+  const lane = list('l', LANE, new Set());
   // old "team vs team" links had no `me` and meant the first ally
   const meHero = bySlug.get(params.get('me') ?? '') ?? (params.get('mode') === 'build' ? allies[0] : undefined);
-  const me = meHero && !enemyIds.has(meHero.id) ? meHero : undefined;
-  return { enemies, mates: allies.filter((h) => h.id !== me?.id).slice(0, MATES), me };
+  const me = meHero && !enemyIds.has(meHero.id) && !lane.some((h) => h.id === meHero.id) ? meHero : undefined;
+  return { enemies, mates: allies.filter((h) => h.id !== me?.id).slice(0, MATES), lane, me, isLane: params.get('m') === 'line' };
 }
 
 function useDraft() {
@@ -79,9 +86,14 @@ function useDraft() {
     const patch = fn(live);
     const set = (k: string, v: string) => (v ? current.set(k, v) : current.delete(k));
     current.delete('mode');
-    set('e', (patch.e ?? live.enemies).map((h) => h.slug).join(','));
-    set('a', (patch.a ?? live.mates).map((h) => h.slug).join(','));
-    set('me', (patch.me === undefined ? live.me : patch.me)?.slug ?? '');
+    const me = patch.me === undefined ? live.me : patch.me;
+    // you can't be on the other side too
+    const notMe = (list: Hero[]) => list.filter((h) => h.id !== me?.id);
+    set('me', me?.slug ?? '');
+    set('e', notMe(patch.e ?? live.enemies).map((h) => h.slug).join(','));
+    set('a', notMe(patch.a ?? live.mates).map((h) => h.slug).join(','));
+    set('l', notMe(patch.l ?? live.lane).map((h) => h.slug).join(','));
+    set('m', patch.m === undefined ? (live.isLane ? 'line' : '') : (patch.m ?? ''));
     setParams(current, { replace: true });
   };
   return { ...state, update, ready: heroes.list.length > 0 };
@@ -146,6 +158,7 @@ function TeamRow({
   active,
   onActivate,
   children,
+  lane,
 }: {
   side: 'enemy' | 'ally';
   title: string;
@@ -153,6 +166,8 @@ function TeamRow({
   active: boolean;
   onActivate: () => void;
   children: ReactNode;
+  /** two lane opponents: bigger slots */
+  lane?: boolean;
 }) {
   return (
     <section className={`draft-team draft-team--${side} ${active ? 'is-active' : ''}`} onClick={onActivate}>
@@ -160,7 +175,7 @@ function TeamRow({
         <h2 className="display">{title}</h2>
         <span className="num muted">{count}</span>
       </header>
-      <ul className="draft-slots">{children}</ul>
+      <ul className={`draft-slots ${lane ? 'is-lane' : ''}`}>{children}</ul>
     </section>
   );
 }
@@ -168,12 +183,15 @@ function TeamRow({
 function HeroPool({
   taken,
   target,
+  targets,
   setTarget,
   labels,
   onPick,
 }: {
   taken: Map<number, Target>;
   target: Target;
+  /** sides on the board right now (no teammates in lane mode or while they are hidden) */
+  targets: Target[];
   setTarget: (t: Target) => void;
   labels: Record<Target, string>;
   onPick: (h: Hero) => void;
@@ -198,7 +216,7 @@ function HeroPool({
     <Panel className={`draft-pool ${open ? '' : 'is-closed'}`}>
       <div className="draft-pool__head">
         <span className="draft-pool__label">{t('draft.addTo')}</span>
-        <Segmented id="draft-target" value={target} onChange={setTarget} options={ORDER.map((v) => ({ value: v, label: labels[v] }))} />
+        <Segmented id="draft-target" value={target} onChange={setTarget} options={targets.map((v) => ({ value: v, label: labels[v] }))} />
         <button className="draft-pool__toggle link-more" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
           {open ? t('draft.hidePool') : t('draft.showPool')}
         </button>
@@ -432,24 +450,11 @@ function YourPick({ score, rank, total }: { score: PickScore; rank: number; tota
   );
 }
 
-function BuildAdvice({ me, enemies }: { me: Hero; enemies: Hero[] }) {
+/** What most players buy on your hero, in buy order (the counter items are in pages/draft/Plan.tsx). */
+function CoreItems({ me }: { me: Hero }) {
   const { t } = useT();
   const items = useItems();
   const base = useItemStats(me.id);
-  const enemyIds = useMemo(() => enemies.map((e) => e.id), [enemies]);
-  const vs = useItemStatsVsEnemies(enemies.length ? me.id : undefined, enemyIds);
-  const enemyById = new Map(enemies.map((e) => [e.id, e]));
-
-  const counterItems = useMemo(
-    () =>
-      itemsVsLineup(base.data ?? [], vs.perEnemy, (id) => {
-        const it = items.byId.get(id);
-        return !!it && isShopItem(it);
-      })
-        .filter((x) => x.score > 0.002)
-        .slice(0, 8),
-    [base.data, vs.perEnemy, items.byId],
-  );
   const core = useMemo(() => {
     const total = Math.max(1, ...(base.data ?? []).map((s) => s.matches));
     return (base.data ?? [])
@@ -459,58 +464,17 @@ function BuildAdvice({ me, enemies }: { me: Hero; enemies: Hero[] }) {
       .slice(0, 12);
   }, [base.data, items.byId]);
 
+  if (!core.length) return null;
   return (
-    <>
-      <section className="item-section">
-        <SectionTitle title={t('draft.itemsVs')} />
-        <p className="muted section-sub">{t(enemies.length ? 'draft.itemsVsSub' : 'draft.itemsVsEmpty')}</p>
-        {enemies.length > 0 &&
-          (base.error || vs.error ? (
-            <ErrorState error={base.error ?? vs.error} />
-          ) : base.isLoading || vs.isLoading ? (
-            <Skeleton h={150} r={14} />
-          ) : !counterItems.length ? (
-            <Empty>{t('draft.noItems')}</Empty>
-          ) : (
-            <div className="draft-items">
-              {counterItems.map((x, i) => {
-                const item = items.byId.get(x.itemId)!;
-                return (
-                  <motion.div key={x.itemId} className="draft-item" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.03, 0.3) }}>
-                    <ItemIcon item={item} size="md" />
-                    <span className="draft-item__text">
-                      <b>{item.name}</b>
-                      <span className="draft-item__vs">
-                        <Delta value={x.score} />
-                        {x.bestVs.map((b) => {
-                          const e = enemyById.get(b.enemyId);
-                          return e ? (
-                            <span key={b.enemyId} title={`${e.name} · ${fmtDelta(b.delta)}`}>
-                              <HeroAvatar hero={e} size={20} />
-                            </span>
-                          ) : null;
-                        })}
-                      </span>
-                    </span>
-                  </motion.div>
-                );
-              })}
-            </div>
-          ))}
-      </section>
-
-      {core.length > 0 && (
-        <section className="item-section">
-          <SectionTitle title={t('draft.core', { hero: me.name })} />
-          <p className="muted section-sub">{t('draft.coreSub')}</p>
-          <div className="draft-core">
-            {core.map(({ s, item }) => (
-              <ItemIcon key={s.item_id} item={item} size="md" />
-            ))}
-          </div>
-        </section>
-      )}
-    </>
+    <section className="item-section">
+      <SectionTitle title={t('draft.core', { hero: me.name })} />
+      <p className="muted section-sub">{t('draft.coreSub')}</p>
+      <div className="draft-core">
+        {core.map(({ s, item }) => (
+          <ItemIcon key={s.item_id} item={item} size="md" />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -614,16 +578,33 @@ function HowItWorks() {
 export function DraftPage() {
   const { t } = useT();
   const heroes = useHeroes();
-  const { enemies, mates, me, update, ready } = useDraft();
+  const { enemies: matchEnemies, mates: allMates, lane: laneEnemies, me, isLane, update, ready } = useDraft();
   const { rows, isLoading, isFetching, error } = useHeroRows();
   const counters = useCounterStats();
   const synergy = useSynergyStats();
-  const [target, setTarget] = useState<Target>('enemy');
+  const [target, setTarget] = useState<Target>(me ? 'enemy' : 'me');
+  // teammates are optional (owner: "by default just me and 6 enemies") — shown when the link has them
+  const [showMates, setShowMates] = useState(allMates.length > 0);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<number>();
 
   useDocumentMeta(t('meta.draft'), t('meta.desc.draft'));
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
+  // the first render has no heroes yet (the URL is parsed against the hero list): once they are in, a shared
+  // link with teammates shows them, and the pool starts on the enemies if "You" is already set
+  const hasMates = allMates.length > 0;
+  useEffect(() => {
+    if (hasMates) setShowMates(true);
+  }, [hasMates]);
+  useEffect(() => {
+    if (ready) setTarget(me ? 'enemy' : 'me');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // what the board shows and the maths uses
+  const enemies = isLane ? laneEnemies : matchEnemies;
+  const mates = useMemo(() => (!isLane && showMates ? allMates : []), [isLane, showMates, allMates]);
+  const foeCap = isLane ? LANE : ENEMIES;
 
   const baseWr = useMemo(() => new Map(rows.map((r) => [r.hero.id, r.winRate])), [rows]);
   const idx = useMemo(() => pairIndex(counters.data, synergy.data), [counters.data, synergy.data]);
@@ -637,9 +618,15 @@ export function DraftPage() {
   const add = (h: Hero) => {
     let next: Target = target;
     update((d) => {
-      if (d.me?.id === h.id || [...d.enemies, ...d.mates].some((x) => x.id === h.id)) return {}; // double click
-      const room: Record<Target, number> = { enemy: ENEMIES - d.enemies.length, ally: MATES - d.mates.length, me: d.me ? 0 : 1 };
-      let into = target;
+      const foes = d.isLane ? d.lane : d.enemies;
+      const team = !d.isLane && showMates ? d.mates : [];
+      if (d.me?.id === h.id || [...foes, ...team].some((x) => x.id === h.id)) return {}; // double click
+      const room: Record<Target, number> = {
+        me: d.me ? 0 : 1,
+        enemy: (d.isLane ? LANE : ENEMIES) - foes.length,
+        ally: !d.isLane && showMates ? MATES - d.mates.length : 0,
+      };
+      let into = target === 'ally' && room.ally <= 0 && !showMates ? 'enemy' : target;
       // a full side hands the click to the next one with room (your own slot can always be replaced)
       if (into !== 'me' && room[into] <= 0) {
         const free = ORDER.find((s) => room[s] > 0);
@@ -648,9 +635,16 @@ export function DraftPage() {
       }
       const left = { ...room, [into]: into === 'me' ? 0 : room[into] - 1 };
       next = left[into] > 0 ? into : (ORDER.find((s) => left[s] > 0) ?? into);
-      return into === 'enemy' ? { e: [...d.enemies, h] } : into === 'ally' ? { a: [...d.mates, h] } : { me: h };
+      if (into === 'me') return { me: h };
+      if (into === 'ally') return { a: [...d.mates, h], e: d.enemies.filter((x) => x.id !== h.id) };
+      return d.isLane ? { l: [...foes, h] } : { e: [...foes, h], a: d.mates.filter((x) => x.id !== h.id) };
     });
     setTarget(next);
+  };
+
+  const setMode = (lane: boolean) => {
+    update(() => ({ m: lane ? 'line' : null }));
+    if (me) setTarget('enemy');
   };
 
   const copyLink = () => {
@@ -664,10 +658,11 @@ export function DraftPage() {
   const loading = !ready || isLoading || counters.isLoading || synergy.isLoading;
   const hasInput = enemies.length + mates.length > 0;
   const labels: Record<Target, string> = {
-    enemy: `${t('draft.target.enemy')} ${enemies.length}/${ENEMIES}`,
     me: t('draft.you'),
+    enemy: `${t(isLane ? 'draft.target.lane' : 'draft.target.enemy')} ${enemies.length}/${foeCap}`,
     ally: `${t('draft.target.ally')} ${mates.length}/${MATES}`,
   };
+  const targets: Target[] = !isLane && showMates ? ORDER : ['me', 'enemy'];
 
   return (
     <Page className="draft-page">
@@ -683,8 +678,67 @@ export function DraftPage() {
 
         <div className="draft-top">
           <div className="draft-board">
-            <TeamRow side="enemy" title={t('draft.enemyTeam')} count={`${enemies.length}/${ENEMIES}`} active={target === 'enemy'} onActivate={() => setTarget('enemy')}>
-              {Array.from({ length: ENEMIES }, (_, i) => {
+            <div className="draft-board__mode">
+              <Segmented
+                id="draft-mode"
+                value={isLane ? 'line' : 'match'}
+                onChange={(v) => setMode(v === 'line')}
+                options={[
+                  { value: 'match', label: t('draft.mode.match') },
+                  { value: 'line', label: t('draft.mode.line') },
+                ]}
+              />
+              <span className="muted small">{t(isLane ? 'draft.mode.lineHint' : 'draft.mode.matchHint')}</span>
+            </div>
+            <TeamRow
+              side="ally"
+              title={mates.length || (showMates && !isLane) ? t('draft.yourTeam') : t('draft.you')}
+              count={!isLane && showMates ? `${mates.length + (me ? 1 : 0)}/${MATES + 1}` : `${me ? 1 : 0}/1`}
+              active={target === 'me' || target === 'ally'}
+              onActivate={() => setTarget(me && showMates && !isLane ? 'ally' : 'me')}
+            >
+              <Slot key={me ? me.id : 'me'} hero={me} you next={target === 'me'} onSelect={() => setTarget('me')} onRemove={() => update(() => ({ me: null }))} />
+              {!isLane && showMates
+                ? Array.from({ length: MATES }, (_, i) => {
+                    const h = mates[i];
+                    return (
+                      <Slot
+                        key={h ? h.id : `a${i}`}
+                        hero={h}
+                        next={!h && target === 'ally' && i === mates.length}
+                        onSelect={() => setTarget('ally')}
+                        onRemove={() => h && update((d) => ({ a: d.mates.filter((x) => x.id !== h.id) }))}
+                      />
+                    );
+                  })
+                : !isLane && (
+                    <li className="draft-slots__wide">
+                      <button
+                        className="draft-mates-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowMates(true);
+                          setTarget('ally');
+                        }}
+                      >
+                        <span className="draft-slot__plus">+</span> {t('draft.mates.show')}
+                        <small className="muted">{t('draft.mates.why')}</small>
+                      </button>
+                    </li>
+                  )}
+            </TeamRow>
+            <div className="draft-vs" aria-hidden>
+              <span className="display">vs</span>
+            </div>
+            <TeamRow
+              side="enemy"
+              title={t(isLane ? 'draft.laneEnemies' : 'draft.enemyTeam')}
+              count={`${enemies.length}/${foeCap}`}
+              active={target === 'enemy'}
+              onActivate={() => setTarget('enemy')}
+              lane={isLane}
+            >
+              {Array.from({ length: foeCap }, (_, i) => {
                 const h = enemies[i];
                 return (
                   <Slot
@@ -692,44 +746,34 @@ export function DraftPage() {
                     hero={h}
                     next={!h && target === 'enemy' && i === enemies.length}
                     onSelect={() => setTarget('enemy')}
-                    onRemove={() => h && update((d) => ({ e: d.enemies.filter((x) => x.id !== h.id) }))}
-                  />
-                );
-              })}
-            </TeamRow>
-            <div className="draft-vs" aria-hidden>
-              <span className="display">vs</span>
-            </div>
-            <TeamRow side="ally" title={t('draft.yourTeam')} count={`${mates.length + (me ? 1 : 0)}/${MATES + 1}`} active={target !== 'enemy'} onActivate={() => setTarget('ally')}>
-              <Slot key={me ? me.id : 'me'} hero={me} you next={target === 'me'} onSelect={() => setTarget('me')} onRemove={() => update(() => ({ me: null }))} />
-              {Array.from({ length: MATES }, (_, i) => {
-                const h = mates[i];
-                return (
-                  <Slot
-                    key={h ? h.id : `a${i}`}
-                    hero={h}
-                    next={!h && target === 'ally' && i === mates.length}
-                    onSelect={() => setTarget('ally')}
-                    onRemove={() => h && update((d) => ({ a: d.mates.filter((x) => x.id !== h.id) }))}
+                    onRemove={() => h && update((d) => (d.isLane ? { l: d.lane.filter((x) => x.id !== h.id) } : { e: d.enemies.filter((x) => x.id !== h.id) }))}
                   />
                 );
               })}
             </TeamRow>
             <div className="draft-board__actions">
+              {!isLane && showMates && (
+                <button className="link-more" onClick={() => {
+                    setShowMates(false);
+                    if (target === 'ally') setTarget('enemy');
+                  }}>
+                  {t('draft.mates.hide')}
+                </button>
+              )}
               <button className="link-more" onClick={copyLink} disabled={!hasInput && !me}>
                 {copied ? t('draft.copied') : t('draft.copyLink')}
               </button>
               {(hasInput || me) && (
                 <button className="link-more draft-clear" onClick={() => {
-                    update(() => ({ e: [], a: [], me: null }));
-                    setTarget('enemy');
+                    update((d) => (d.isLane ? { l: [], me: null } : { e: [], a: [], me: null }));
+                    setTarget('me');
                   }}>
                   {t('draft.clear')}
                 </button>
               )}
             </div>
           </div>
-          <HeroPool taken={taken} target={target} setTarget={setTarget} labels={labels} onPick={add} />
+          <HeroPool taken={taken} target={target} targets={targets} setTarget={setTarget} labels={labels} onPick={add} />
         </div>
 
         {error || counters.error ? (
@@ -739,20 +783,22 @@ export function DraftPage() {
         ) : (
           <div className="draft-results">
             <div className="draft-results__main">
-              {me && meScore && (
+              {me ? (
                 <>
-                  <YourPick score={meScore} rank={picks.indexOf(meScore) + 1} total={picks.length} />
-                  <BuildAdvice me={me} enemies={enemies} />
+                  {!isLane && meScore && <YourPick score={meScore} rank={picks.indexOf(meScore) + 1} total={picks.length} />}
+                  <DraftPlan me={me} enemies={enemies} allies={mates} lane={isLane} score={meScore} />
+                  {!isLane && <CoreItems me={me} />}
                 </>
+              ) : (
+                <p className="draft-pickme">{t(isLane ? 'draft.pickMeLane' : 'draft.pickMe')}</p>
               )}
               <Picks picks={picks} hasInput={hasInput} meId={me?.id} autoRole={autoRole} hasMe={!!me} />
             </div>
             <aside className="draft-aside">
-              {!hasInput && <HowItWorks />}
+              {!hasInput && !me && <HowItWorks />}
               {mates.length > 0 && <TeamNeeds mates={mates} filtered={autoRole !== 'all'} />}
               {enemies.length > 0 && <Answers enemies={enemies} picks={picks} />}
               {enemies.length > 0 && <Avoid picks={picks} />}
-              {!me && hasInput && <p className="muted small draft-aside__hint">{t('draft.lockHint')}</p>}
             </aside>
           </div>
         )}
